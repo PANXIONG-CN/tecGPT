@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import importlib
 
 def time_add(data, week_start, interval=5, weekday_only=False, holiday_list=None, day_start=0, hour_of_day=24):
     # day and week
@@ -88,7 +89,30 @@ def load_st_dataset(dataset, args):
         holiday_list = []
         day_data, week_data, holiday_data = time_add(data[..., 0], week_start, interval, weekday_only, holiday_list=holiday_list)
     else:
-        raise ValueError
+        # Plugin-style loader: try lib/datasets/<dataset>.py::load(args)
+        try:
+            module_name = f"lib.datasets.{dataset.lower()}"
+            plugin = importlib.import_module(module_name)
+            # plugin must expose: load(args) -> np.ndarray of shape [T, N] or [T, N, C]
+            base = plugin.load(args)
+            if base.ndim == 2:
+                data = np.expand_dims(base, axis=-1)
+            elif base.ndim == 3:
+                data = base
+            else:
+                raise ValueError('Plugin dataset must return [T,N] or [T,N,C] array.')
+            # default temporal meta if plugin didn't set them
+            interval = getattr(args, 'interval', 60)
+            week_day = getattr(args, 'week_day', 7)
+            args.interval = interval
+            args.week_day = week_day
+            week_start = getattr(args, 'week_start', 5)
+            holiday_list = getattr(args, 'holiday_list', [])
+            day_data, week_data, holiday_data = time_add(data[..., 0], week_start, interval=interval, weekday_only=False, holiday_list=holiday_list)
+        except ModuleNotFoundError as e:
+            raise ValueError(f'Unknown dataset {dataset} and no plugin found. ({e})')
+        except Exception as e:
+            raise
     if len(data.shape) == 2:
         data = np.expand_dims(data, axis=-1)
         day_data = np.expand_dims(day_data, axis=-1).astype(int)

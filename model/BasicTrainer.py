@@ -4,7 +4,7 @@ import time
 import copy
 import numpy as np
 from lib.logger import get_logger
-from lib.metrics import All_Metrics
+from lib.metrics import All_Metrics, MAE_torch, RMSE_torch, CORR_torch
 
 class Trainer(object):
     def __init__(self, model, loss, loss_kl, optimizer, train_loader, val_loader, test_loader,
@@ -25,13 +25,43 @@ class Trainer(object):
         self.batch_seen = 0
         if val_loader != None:
             self.val_per_epoch = len(val_loader)
-        self.best_path = os.path.join(self.args.log_dir, self.args.save_pretrain_path)
+        # Always save best model to a fixed file name for consistency with Run.py test mode
+        self.best_path = os.path.join(self.args.log_dir, 'best_model.pth')
         self.loss_figure_path = os.path.join(self.args.log_dir, 'loss.png')
         #log
         if os.path.isdir(args.log_dir) == False and not args.debug:
             os.makedirs(args.log_dir, exist_ok=True)
-        self.logger = get_logger(args.log_dir, name=args.model, debug=args.debug)
+        # build informative logfile name: <timestamp>_<dataset>_<model>_<mode>.log
+        from datetime import datetime
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        try:
+            ds = getattr(args, 'dataset', 'DATASET')
+            md = getattr(args, 'model', 'MODEL')
+            mode = getattr(args, 'mode', 'train')
+            filename = f"{ts}_{ds}_{md}_{mode}.log"
+        except Exception:
+            filename = f"{ts}_run.log"
+        self.log_filename = filename
+        self.log_filename = filename
+        self.logger = get_logger(args.log_dir, name=args.model, debug=args.debug, filename=filename)
         self.logger.info('Experiment log path in: {}'.format(args.log_dir))
+        # log command line and basic env/device info
+        try:
+            if hasattr(args, 'cmdline'):
+                self.logger.info('Command: {}'.format(args.cmdline))
+            import torch
+            self.logger.info('Torch: {}  CUDA: {}'.format(torch.__version__, torch.cuda.is_available()))
+            if torch.cuda.is_available():
+                self.logger.info('GPU: {}'.format(torch.cuda.get_device_name(0)))
+                self.logger.info('CUDA_VISIBLE_DEVICES={}'.format(os.environ.get('CUDA_VISIBLE_DEVICES')))
+            # dump key args
+            for k in sorted(vars(args).keys()):
+                try:
+                    self.logger.info(f'{k}: {getattr(args,k)}')
+                except Exception:
+                    pass
+        except Exception:
+            pass
         #if not args.debug:
         #self.logger.info("Argument: %r", args)
         # for arg, value in sorted(vars(args).items()):
@@ -45,6 +75,8 @@ class Trainer(object):
 
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(val_dataloader):
+                data = data.to(self.args.device, non_blocking=True)
+                target = target.to(self.args.device, non_blocking=True)
                 data = data[..., :self.args.input_base_dim + self.args.input_extra_dim]
                 if self.args.mode == 'pretrain':
                     label = data[..., :self.args.input_base_dim + self.args.input_extra_dim]
@@ -56,7 +88,8 @@ class Trainer(object):
                 if self.args.mode == 'pretrain':
                     loss, loss_base = self.loss(output, label[..., :self.args.output_dim], mask)
                 else:
-                    loss, _ = self.loss(output, label[..., :self.args.output_dim])
+                    res = self.loss(output, label[..., :self.args.output_dim])
+                    loss = res[1] if isinstance(res, tuple) else res
                 if not torch.isnan(loss):
                     total_val_loss += loss.item()
         val_loss = total_val_loss / len(val_dataloader)
@@ -69,32 +102,54 @@ class Trainer(object):
         total_loss = 0
         total_flow_loss = 0
         total_s_loss = 0
+        use_amp = getattr(self.args, 'amp', False)
+        accum = max(1, int(getattr(self.args, 'accumulate_steps', 1)))
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        grad_clip = float(getattr(self.args, 'grad_clip', 0.0))
         for batch_idx, (data, target) in enumerate(self.train_loader):
             self.batch_seen += 1
+            data = data.to(self.args.device, non_blocking=True)
+            target = target.to(self.args.device, non_blocking=True)
             data = data[..., :self.args.input_base_dim + self.args.input_extra_dim]
             if self.args.mode == 'pretrain':
                 label = data[..., :self.args.input_base_dim + self.args.input_extra_dim]
             else:
                 label = target[..., :self.args.input_base_dim + self.args.input_extra_dim]
-            self.optimizer.zero_grad()
+            if batch_idx % accum == 0:
+                self.optimizer.zero_grad(set_to_none=True)
 
             if self.args.mode == 'pretrain':
-                out, out_time, mask, probability, eb = self.model(data, label, self.batch_seen, epoch)
-                loss_flow, loss_base = self.loss(out, label[..., :self.args.output_dim], mask)
-                if epoch > self.args.change_epoch :
-                    loss_s = self.loss_kl(probability.log(), eb) * 0.1
-                    loss = loss_flow + loss_s
-                else:
-                    loss = loss_flow
+                with torch.cuda.amp.autocast(enabled=use_amp):
+                    out, out_time, mask, probability, eb = self.model(data, label, self.batch_seen, epoch)
+                    loss_flow, loss_base = self.loss(out, label[..., :self.args.output_dim], mask)
+                    if epoch > self.args.change_epoch:
+                        loss_s = self.loss_kl(probability.log(), eb) * 0.1
+                        loss = loss_flow + loss_s
+                    else:
+                        loss = loss_flow
             else:
-                out, out_time, mask, probability, eb2 = self.model(data, label, self.batch_seen)
-                loss, _ = self.loss(out, label[..., :self.args.output_dim])
-            loss.backward()
+                with torch.cuda.amp.autocast(enabled=use_amp):
+                    out, out_time, mask, probability, eb2 = self.model(data, label, self.batch_seen)
+                    res = self.loss(out, label[..., :self.args.output_dim])
+                    loss = res[1] if isinstance(res, tuple) else res
+
+            loss_to_back = loss / accum
+            if use_amp:
+                scaler.scale(loss_to_back).backward()
+            else:
+                loss_to_back.backward()
 
             # add max grad clipping
-            if self.args.grad_norm:
+            if grad_clip and grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
+            elif self.args.grad_norm:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
-            self.optimizer.step()
+            if (batch_idx + 1) % accum == 0 or (batch_idx + 1) == self.train_per_epoch:
+                if use_amp:
+                    scaler.step(self.optimizer)
+                    scaler.update()
+                else:
+                    self.optimizer.step()
             total_loss += loss.item()
             # calculate total loss
             if self.args.mode == 'pretrain':
@@ -113,9 +168,10 @@ class Trainer(object):
         else:
             self.logger.info('**********Train Epoch {}: averaged Loss: {:.6f}'.format(epoch, train_epoch_loss))
 
-        #learning rate decay
-        if self.args.lr_decay:
-            self.lr_scheduler.step()
+        # learning rate scheduling (non-plateau handled here; plateau handled in train() after val)
+        if self.lr_scheduler is not None and getattr(self.args, 'scheduler', 'none') != 'plateau':
+            if self.args.lr_decay:
+                self.lr_scheduler.step()
         # train_epoch_flow_loss for params selecting
         if self.args.mode == 'pretrain':
             return train_epoch_flow_loss
@@ -152,7 +208,11 @@ class Trainer(object):
                     val_dataloader = self.val_loader
                 val_epoch_loss = self.val_epoch(epoch, val_dataloader)
                 val_loss_list.append(val_epoch_loss)
-                if val_epoch_loss < best_loss:
+                # step plateau scheduler with validation loss
+                if self.lr_scheduler is not None and getattr(self.args, 'scheduler', 'none') == 'plateau':
+                    self.lr_scheduler.step(val_epoch_loss)
+                min_delta = float(getattr(self.args, 'early_stop_min_delta', 0.0))
+                if (best_loss - val_epoch_loss) > min_delta:
                     best_loss = val_epoch_loss
                     not_improved_count = 0
                     best_state = True
@@ -182,11 +242,26 @@ class Trainer(object):
         training_time = time.time() - start_time
         self.logger.info("Total training time: {:.4f}min, best loss: {:.6f}".format((training_time / 60), best_loss))
 
-        #save the best model to file
-        # if not self.args.debug:
-        if self.args.debug:
-            torch.save(best_model, self.best_path)
-            self.logger.info("Saving current best model to " + self.best_path)
+        # Save the best model to file (always)
+        try:
+            if 'best_model' in locals():
+                torch.save(best_model, self.best_path)
+                self.logger.info("Saving current best model to " + self.best_path)
+                # also save with log prefix name
+                try:
+                    import os
+                    base_stem = os.path.splitext(self.log_filename)[0] if hasattr(self, 'log_filename') else None
+                    if base_stem:
+                        named_pth = os.path.join(self.args.log_dir, f"{base_stem}.pth")
+                        torch.save(best_model, named_pth)
+                        self.logger.info("Saving named best model to " + named_pth)
+                except Exception as e:
+                    self.logger.warning(f"Failed to save named best model: {e}")
+            else:
+                torch.save(self.model.state_dict(), self.best_path)
+                self.logger.info("Saving current model to " + self.best_path)
+        except Exception as e:
+            self.logger.warning(f"Failed to save best model: {e}")
 
         #test
         # self.model.load_state_dict(best_model)
@@ -194,7 +269,31 @@ class Trainer(object):
         if self.args.mode == 'pretrain':
             self.test(best_model_test, self.args, self.train_loader, self.scaler, self.logger)
         else:
-            self.test(best_model_test, self.args, self.test_loader, self.scaler, self.logger)
+            # save arrays for test and val (if any)
+            self.test(best_model_test, self.args, self.test_loader, self.scaler, self.logger,
+                      save_arrays=True, save_tag='test', log_filename=self.log_filename)
+            if self.val_loader is not None:
+                self.test(best_model_test, self.args, self.val_loader, self.scaler, self.logger,
+                          save_arrays=True, save_tag='val', log_filename=self.log_filename)
+            # Optional: year-wise evaluation for GIMtec + CSA_WTConvLSTM to match original repo analysis
+            try:
+                if getattr(self.args, 'model', None) == 'CSA_WTConvLSTM' and self.args.dataset.lower() in ['gimtec', 'tec']:
+                    from lib.eval_gimtec_yearwise import evaluate_per_year
+                    evaluate_per_year(best_model_test, self)
+                # Always save JSON metrics for GIMtec/TEC at end of training
+                if self.args.dataset.lower() in ['gimtec', 'tec']:
+                    from lib.eval_gimtec_yearwise import compute_yearwise_metrics
+                    metrics = compute_yearwise_metrics(best_model_test, self)
+                    import json, os
+                    # derive json filename from log filename to keep naming consistent
+                    base_stem = os.path.splitext(self.log_filename)[0]
+                    json_name = f"{base_stem}.json"
+                    out_path = os.path.join(self.args.log_dir, json_name)
+                    with open(out_path, 'w') as f:
+                        json.dump(metrics, f, indent=2)
+                    self.logger.info('Saved JSON metrics to {}'.format(out_path))
+            except Exception as e:
+                self.logger.warning(f'Year-wise evaluation skipped due to error: {e}')
 
 
     def save_checkpoint(self):
@@ -207,7 +306,7 @@ class Trainer(object):
         self.logger.info("Saving current best model to " + self.best_path)
 
     @staticmethod
-    def test(model, args, data_loader, scaler, logger, path=None):
+    def test(model, args, data_loader, scaler, logger, path=None, save_arrays=False, save_tag='test', log_filename=None):
         if path != None:
             check_point = torch.load(path)
             state_dict = check_point['state_dict']
@@ -219,8 +318,9 @@ class Trainer(object):
         y_true = []
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(data_loader):
+                data = data.to(args.device, non_blocking=True)
+                target = target.to(args.device, non_blocking=True)
                 data = data[..., :args.input_base_dim + args.input_extra_dim]
-                # label = target[..., :args.input_base_dim + args.input_extra_dim]
                 if args.mode == 'pretrain':
                     output, _, mask, _, _ = model(data, None, None, args.epochs)
                     label = data[..., :args.output_dim]
@@ -231,19 +331,41 @@ class Trainer(object):
                     label = target[..., :args.output_dim]
                     y_true.append(label)
                     y_pred.append(output)
-        y_true = scaler.inverse_transform(torch.cat(y_true, dim=0))
-        # if args.real_value:
-        #     y_pred = torch.cat(y_pred, dim=0)
-        # else:
-        y_pred = scaler.inverse_transform(torch.cat(y_pred, dim=0))
-        # np.save('./{}_true.npy'.format(args.dataset+'_'+args.model+'_'+args.mode), y_true.cpu().numpy())
-        # np.save('./{}_pred.npy'.format(args.dataset+'_'+args.model+'_'+args.mode), y_pred.cpu().numpy())
-        for t in range(y_true.shape[1]):
-            mae, rmse, mape, _, corr = All_Metrics(y_pred[:, t, ...], y_true[:, t, ...],
-                                                args.mae_thresh, args.mape_thresh)
-            logger.info("Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}, CORR:{:.4f}%".format(
-                t + 1, mae, rmse, mape*100, corr))
-        mae, rmse, mape, _, corr = All_Metrics(y_pred, y_true, args.mae_thresh, args.mape_thresh)
-        logger.info("Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}%, CORR:{:.4f}".format(
-                    mae, rmse, mape*100, corr))
 
+        y_true = scaler.inverse_transform(torch.cat(y_true, dim=0))
+        y_pred = scaler.inverse_transform(torch.cat(y_pred, dim=0))
+
+        disable_mape = (getattr(args, 'model', None) == 'CSA_WTConvLSTM' and args.dataset.lower() in ['gimtec', 'tec'])
+
+        if disable_mape:
+            # Log MAE/RMSE/CORR only (align with original CSA repo). Values already in TECU.
+            for t in range(y_true.shape[1]):
+                mae, _ = MAE_torch(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
+                rmse = RMSE_torch(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
+                corr = CORR_torch(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
+                logger.info("Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, CORR:{:.4f}%".format(
+                    t + 1, mae, rmse, corr))
+            mae, _ = MAE_torch(y_pred, y_true, args.mae_thresh)
+            rmse = RMSE_torch(y_pred, y_true, args.mae_thresh)
+            corr = CORR_torch(y_pred, y_true, args.mae_thresh)
+            logger.info("Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, CORR:{:.4f}".format(mae, rmse, corr))
+        else:
+            for t in range(y_true.shape[1]):
+                mae, rmse, mape, _, corr = All_Metrics(y_pred[:, t, ...], y_true[:, t, ...],
+                                                       args.mae_thresh, args.mape_thresh)
+                logger.info("Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}, CORR:{:.4f}%".format(
+                    t + 1, mae, rmse, mape*100, corr))
+            mae, rmse, mape, _, corr = All_Metrics(y_pred, y_true, args.mae_thresh, args.mape_thresh)
+            logger.info("Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}%, CORR:{:.4f}".format(
+                        mae, rmse, mape*100, corr))
+
+        # optionally save arrays for reproduction
+        if save_arrays and log_filename:
+            try:
+                import numpy as np, os
+                base_stem = os.path.splitext(log_filename)[0]
+                np.save(os.path.join(args.log_dir, f"{base_stem}_{save_tag}_preds.npy"), y_pred.cpu().numpy())
+                np.save(os.path.join(args.log_dir, f"{base_stem}_{save_tag}_true.npy"), y_true.cpu().numpy())
+                logger.info(f"Saved arrays: {base_stem}_{save_tag}_preds.npy / true.npy")
+            except Exception as e:
+                logger.warning(f"Failed to save arrays: {e}")

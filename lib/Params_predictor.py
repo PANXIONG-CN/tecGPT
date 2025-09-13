@@ -1,5 +1,6 @@
 import argparse
 import configparser
+import importlib
 
 def get_predictor_params(args):
     # get the based paras of predictors
@@ -61,7 +62,16 @@ def get_predictor_params(args):
     elif args.model == 'STMGCN':
         from model.STMGCN_demand.args import parse_args
         args_predictor = parse_args(args.dataset, parser_pred)
+    elif args.model == 'OptimizedCSA_WTConvLSTM':
+        from model.OptimizedCSA_WTConvLSTM.args import parse_args
+        args_predictor = parse_args(args.dataset, parser_pred)
     else:
-        raise ValueError
+        # Dynamic plugin fallback for custom predictors
+        try:
+            mod = importlib.import_module(f"model.{args.model}.args")
+            parse_args = getattr(mod, 'parse_args')
+            args_predictor = parse_args(args.dataset, parser_pred)
+        except Exception as e:
+            raise ValueError(f"Unknown predictor {args.model} or plugin load failed: {e}")
 
     return args_predictor

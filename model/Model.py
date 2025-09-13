@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import importlib
 from Pretrain_model.GPTST import GPTST_Model
 
 class Fusion(nn.Module):
@@ -43,7 +44,9 @@ class Enhance_model(nn.Module):
             self.fusion = Fusion(self.hidden_dim)
             self.lin_test = nn.Linear(self.input_base_dim, self.hidden_dim)
 
-        if self.mode == 'ori':
+        # For baseline predictors without GPT-ST enhancement, both 'ori' and 'test'
+        # should use the raw input base dim. Only 'eval' (enhanced) uses hidden_dim.
+        if self.mode in ['ori', 'test']:
             dim_in = self.input_base_dim
         else:
             dim_in = self.hidden_dim
@@ -90,7 +93,18 @@ class Enhance_model(nn.Module):
             from STMGCN_demand.STMGCN import ST_MGCN
             self.predictor = ST_MGCN(args_predictor, args.device, dim_in, dim_out)
         else:
-            raise ValueError
+            # Dynamic plugin fallback: model/<Name>/<lowercase>.py with class <Name>
+            try:
+                module = importlib.import_module(f"model.{self.model}.{self.model.lower()}")
+                Predictor = getattr(module, self.model)
+                try:
+                    # Try common ctor signature
+                    self.predictor = Predictor(args_predictor, args.device, dim_in, dim_out)
+                except TypeError:
+                    # Fallback to minimal signature
+                    self.predictor = Predictor(args_predictor, args.device, dim_in)
+            except Exception as e:
+                raise ValueError(f"Unknown model {self.model} or plugin load failed: {e}")
 
     def load_pretrained_model(self):
         self.pretrain_model.load_state_dict(torch.load(self.log_dir + self.load_pretrain_path))
@@ -98,7 +112,7 @@ class Enhance_model(nn.Module):
             param.requires_grad = False
 
     def forward(self, source, label, batch_seen=None):
-        if self.mode == 'ori':
+        if self.mode in ['ori', 'test']:
             return self.forward_ori(source, label, batch_seen)
         else:
             return self.forward_pretrain(source, label, batch_seen)

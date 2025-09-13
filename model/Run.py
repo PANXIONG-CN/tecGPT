@@ -51,13 +51,16 @@ init_seed(args.seed, args.seed_mode)
 print('mode: ', args.mode, '  model: ', args.model, '  dataset: ', args.dataset, '  load_pretrain_path: ', args.load_pretrain_path, '  save_pretrain_path: ', args.save_pretrain_path)
 
 
-#config log path
-current_dir = os.path.dirname(os.path.realpath(__file__))
-log_dir = os.path.join(current_dir,'SAVE', args.dataset)
+#config log path -> repo root Output/<DATASET>/<MODEL>
+repo_root = file_dir
+log_dir = os.path.join(repo_root,'Output', args.dataset, args.model)
 Mkdir(log_dir)
 args.log_dir = log_dir
 args.load_pretrain_path = args.load_pretrain_path
 args.save_pretrain_path = args.save_pretrain_path
+
+# record command line for logging later
+args.cmdline = f"python {os.path.basename(__file__)} " + " ".join(sys.argv[1:])
 
 #load dataset
 train_loader, val_loader, test_loader, scaler_data, scaler_day, scaler_week, scaler_holiday = get_dataloader(args,
@@ -131,16 +134,44 @@ else:
     raise ValueError
 loss_kl = nn.KLDivLoss(reduction='sum').to(args.device)
 
-optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr_init, eps=1.0e-8,
-                             weight_decay=0, amsgrad=False)
+# optimizer
+opt_name = getattr(args, 'optimizer', 'adam').lower()
+weight_decay = getattr(args, 'weight_decay', 0.0)
+if opt_name == 'adamw':
+    optimizer = torch.optim.AdamW(params=model.parameters(), lr=args.lr_init, eps=1.0e-8,
+                                  weight_decay=weight_decay, amsgrad=False)
+elif opt_name == 'sgd':
+    optimizer = torch.optim.SGD(params=model.parameters(), lr=args.lr_init, momentum=0.9,
+                                weight_decay=weight_decay, nesterov=True)
+else:
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr_init, eps=1.0e-8,
+                                 weight_decay=weight_decay, amsgrad=False)
 #learning rate decay
 lr_scheduler = None
-if args.lr_decay:
+if getattr(args, 'scheduler', 'none') == 'plateau':
+    print('Applying ReduceLROnPlateau scheduler.')
+    lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer=optimizer,
+        mode='min',
+        factor=args.plateau_factor,
+        patience=args.plateau_patience,
+        threshold=args.plateau_threshold,
+        threshold_mode=args.plateau_threshold_mode,
+        cooldown=args.plateau_cooldown,
+        min_lr=args.min_lr,
+    )
+elif getattr(args, 'scheduler', 'none') == 'cosine':
+    print('Applying CosineAnnealingLR scheduler.')
+    t_max = args.cosine_t_max if getattr(args, 'cosine_t_max', None) else args.epochs
+    eta_min = args.lr_init * getattr(args, 'eta_min_factor', 0.01)
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=t_max, eta_min=eta_min)
+elif args.lr_decay:
     print('Applying learning rate decay.')
     lr_decay_steps = [int(i) for i in list(args.lr_decay_step.split(','))]
-    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer=optimizer,
-                                                        milestones=lr_decay_steps,
-                                                        gamma=args.lr_decay_rate)
+    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer=optimizer,
+        milestones=lr_decay_steps,
+        gamma=args.lr_decay_rate)
 
 # #config log path
 # current_dir = os.path.dirname(os.path.realpath(__file__))
@@ -161,6 +192,25 @@ elif args.mode == 'ori':
 elif args.mode == 'test':
     model.load_state_dict(torch.load(log_dir + '/best_model.pth'))
     print("Load saved model")
-    trainer.test(model, trainer.args, test_loader, scaler_data, trainer.logger)
+    trainer.test(model, trainer.args, test_loader, scaler_data, trainer.logger,
+                 save_arrays=True, save_tag='test', log_filename=getattr(trainer,'log_filename',None))
+    # Year-wise evaluation for GIMtec + CSA_WTConvLSTM to match original repo analysis
+    try:
+        if getattr(args, 'model', None) == 'CSA_WTConvLSTM' and args.dataset.lower() in ['gimtec', 'tec']:
+            from lib.eval_gimtec_yearwise import evaluate_per_year
+            evaluate_per_year(model, trainer)
+        # Optimized model also uses vendor pipeline; optionally save JSON metrics aligned with log filename
+        if getattr(args, 'save_json', False) and args.dataset.lower() in ['gimtec', 'tec']:
+            from lib.eval_gimtec_yearwise import compute_yearwise_metrics
+            metrics = compute_yearwise_metrics(model, trainer)
+            import json, os
+            base_stem = os.path.splitext(trainer.log_filename)[0] if hasattr(trainer, 'log_filename') else 'eval'
+            json_name = f"{base_stem}.json"
+            out_path = os.path.join(args.log_dir, json_name)
+            with open(out_path, 'w') as f:
+                json.dump(metrics, f, indent=2)
+            print('Saved JSON metrics to', out_path)
+    except Exception as e:
+        print('Year-wise evaluation skipped due to error:', e)
 else:
     raise ValueError

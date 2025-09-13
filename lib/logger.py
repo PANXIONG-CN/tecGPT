@@ -2,34 +2,40 @@ import os
 import logging
 from datetime import datetime
 
-def get_logger(root, name=None, debug=True):
-    #when debug is true, show DEBUG and INFO in screen
-    #when debug is false, show DEBUG in file and info in both screen&file
-    #INFO will always be in screen
-    # create a logger
+
+def get_logger(root, name=None, debug=True, filename=None):
+    """
+    Create a logger writing both to console and a file. The file name can be customized.
+    - root: directory to place log file
+    - name: logger name (avoids duplicated handlers if reused)
+    - debug: console level; file always records DEBUG
+    - filename: optional file name; defaults to 'run.log'
+    """
+    os.makedirs(root, exist_ok=True)
     logger = logging.getLogger(name)
-    #critical > error > warning > info > debug > notset
     logger.setLevel(logging.DEBUG)
 
-    # define the formate
+    # clear existing handlers to avoid duplicates when re-creating trainers
+    if logger.handlers:
+        for h in list(logger.handlers):
+            logger.removeHandler(h)
+
     formatter = logging.Formatter('%(asctime)s: %(message)s', "%Y-%m-%d %H:%M")
-    # create another handler for output log to console
+
+    # console handler
     console_handler = logging.StreamHandler()
-    if debug:
-        console_handler.setLevel(logging.DEBUG)
-    else:
-        console_handler.setLevel(logging.INFO)
-        # create a handler for write log to file
-        logfile = os.path.join(root, 'run.log')
-        print('Creat Log File in: ', logfile)
-        file_handler = logging.FileHandler(logfile, mode='w')
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(formatter)
+    console_handler.setLevel(logging.DEBUG if debug else logging.INFO)
     console_handler.setFormatter(formatter)
-    # add Handler to logger
     logger.addHandler(console_handler)
-    if not debug:
-        logger.addHandler(file_handler)
+
+    # file handler (always write to file, with informative filename when provided)
+    logfile = os.path.join(root, filename or 'run.log')
+    print('Creat Log File in: ', logfile)
+    file_handler = logging.FileHandler(logfile, mode='w')
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
     return logger
 
 
