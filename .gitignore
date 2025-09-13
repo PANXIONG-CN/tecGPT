@@ -1,0 +1,5 @@
+# Project-specific ignores
+/data/
+/Output/
+/fix_docs/
+
