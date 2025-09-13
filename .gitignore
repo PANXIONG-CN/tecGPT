@@ -3,3 +3,10 @@
 /Output/
 /fix_docs/
 
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python

@@ -1,0 +1,55 @@
+{
+  "mse_norm": 0.28702830326583273,
+  "rmse_norm": 0.5354792021340041,
+  "rmse_real_TECU": 78.768990633912,
+  "mae_real_TECU": 77.93290356137797,
+  "relative_error_percent": 53.54792021340041,
+  "count_frames": 21912,
+  "shape_per_frame": [
+    1,
+    71,
+    73
+  ],
+  "per_year": {
+    "2015": {
+      "mse_norm": 0.26292499899864197,
+      "rmse_norm": 0.5127621271102635,
+      "rmse_real_TECU": 75.42731475830078,
+      "mae_real_TECU": 73.98983764648438,
+      "relative_error_percent": 51.276212711026346,
+      "windows": 365
+    },
+    "2019": {
+      "mse_norm": 0.3049717843532562,
+      "rmse_norm": 0.5522425050222558,
+      "rmse_real_TECU": 81.23487854003906,
+      "mae_real_TECU": 80.76544952392578,
+      "relative_error_percent": 55.22425050222558,
+      "windows": 365
+    },
+    "2020": {
+      "mse_norm": 0.30305594205856323,
+      "rmse_norm": 0.5505051698745101,
+      "rmse_real_TECU": 80.97930908203125,
+      "mae_real_TECU": 80.49674224853516,
+      "relative_error_percent": 55.05051698745101,
+      "windows": 366
+    },
+    "2021": {
+      "mse_norm": 0.29685142636299133,
+      "rmse_norm": 0.5448407348601895,
+      "rmse_real_TECU": 80.14607238769531,
+      "mae_real_TECU": 79.58946990966797,
+      "relative_error_percent": 54.48407348601895,
+      "windows": 365
+    },
+    "2022": {
+      "mse_norm": 0.26729345321655273,
+      "rmse_norm": 0.517004306767896,
+      "rmse_real_TECU": 76.05133819580078,
+      "mae_real_TECU": 74.81599426269531,
+      "relative_error_percent": 51.7004306767896,
+      "windows": 365
+    }
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "mse_norm": 0.0005568669945496208,
+  "rmse_norm": 0.022095726503071293,
+  "rmse_real_TECU": 3.250281368601787,
+  "mae_real_TECU": 2.2605496448467752,
+  "relative_error_percent": 2.209572650307129,
+  "count_frames": 21912,
+  "shape_per_frame": [
+    1,
+    71,
+    73
+  ],
+  "per_year": {
+    "2015": {
+      "mse_norm": 0.0011407728306949139,
+      "rmse_norm": 0.033775328728154724,
+      "rmse_real_TECU": 4.968351364135742,
+      "mae_real_TECU": 3.3810994625091553,
+      "relative_error_percent": 3.3775328728154723,
+      "windows": 365
+    },
+    "2019": {
+      "mse_norm": 0.00020326995581854135,
+      "rmse_norm": 0.01425727729331731,
+      "rmse_real_TECU": 2.097245454788208,
+      "mae_real_TECU": 1.5010192394256592,
+      "relative_error_percent": 1.425727729331731,
+      "windows": 365
+    },
+    "2020": {
+      "mse_norm": 0.00020724290516227484,
+      "rmse_norm": 0.014395933632879629,
+      "rmse_real_TECU": 2.1176419258117676,
+      "mae_real_TECU": 1.5175132751464844,
+      "relative_error_percent": 1.439593363287963,
+      "windows": 366
+    },
+    "2021": {
+      "mse_norm": 0.0003156704769935459,
+      "rmse_norm": 0.017767117858379446,
+      "rmse_real_TECU": 2.6135430335998535,
+      "mae_real_TECU": 1.8186324834823608,
+      "relative_error_percent": 1.7767117858379446,
+      "windows": 365
+    },
+    "2022": {
+      "mse_norm": 0.0009183366782963276,
+      "rmse_norm": 0.030304070325557382,
+      "rmse_real_TECU": 4.457728862762451,
+      "mae_real_TECU": 3.086519479751587,
+      "relative_error_percent": 3.0304070325557384,
+      "windows": 365
+    }
+  }
+}

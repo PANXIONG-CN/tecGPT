@@ -1,0 +1,24 @@
+2025-09-12 17:45: Experiment log path in: /root/tecGPT/model/SAVE/GIMtec
+2025-09-12 17:45: Train Epoch 1: 0/4 Loss: 1.221086
+2025-09-12 17:45: **********Train Epoch 1: averaged Loss: 1.221512
+2025-09-12 17:45: **********Val Epoch 1: average Loss: 1.276958
+2025-09-12 17:45: *********************************Current best model saved!
+2025-09-12 17:45: Train Epoch 2: 0/4 Loss: 0.986867
+2025-09-12 17:45: **********Train Epoch 2: averaged Loss: 0.987456
+2025-09-12 17:45: **********Val Epoch 2: average Loss: 1.137753
+2025-09-12 17:45: *********************************Current best model saved!
+2025-09-12 17:45: Total training time: 0.1168min, best loss: 1.137753
+2025-09-12 17:45: Saving current best model to /root/tecGPT/model/SAVE/GIMtec/best_model.pth
+2025-09-12 17:45: Horizon 01, MAE: 5.88, RMSE: 6.67, MAPE: 165.2971, CORR:0.1529%
+2025-09-12 17:45: Horizon 02, MAE: 5.68, RMSE: 6.49, MAPE: 150.9582, CORR:0.2297%
+2025-09-12 17:45: Horizon 03, MAE: 5.46, RMSE: 6.38, MAPE: 135.3575, CORR:0.2463%
+2025-09-12 17:45: Horizon 04, MAE: 5.32, RMSE: 6.27, MAPE: 133.9027, CORR:0.3021%
+2025-09-12 17:45: Horizon 05, MAE: 5.17, RMSE: 6.00, MAPE: 133.8979, CORR:0.2979%
+2025-09-12 17:45: Horizon 06, MAE: 4.87, RMSE: 5.67, MAPE: 129.7055, CORR:0.3277%
+2025-09-12 17:45: Horizon 07, MAE: 4.64, RMSE: 5.51, MAPE: 135.8339, CORR:0.3335%
+2025-09-12 17:45: Horizon 08, MAE: 4.53, RMSE: 5.49, MAPE: 145.8665, CORR:0.2699%
+2025-09-12 17:45: Horizon 09, MAE: 4.52, RMSE: 5.54, MAPE: 146.3071, CORR:0.2169%
+2025-09-12 17:45: Horizon 10, MAE: 4.65, RMSE: 5.67, MAPE: 143.6037, CORR:0.2881%
+2025-09-12 17:45: Horizon 11, MAE: 4.90, RMSE: 5.86, MAPE: 145.2997, CORR:0.3691%
+2025-09-12 17:45: Horizon 12, MAE: 5.31, RMSE: 6.20, MAPE: 153.6110, CORR:0.2853%
+2025-09-12 17:45: Average Horizon, MAE: 5.08, RMSE: 5.99, MAPE: 143.3034%, CORR:0.6435

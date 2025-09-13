@@ -1,0 +1,225 @@
+2025-09-12 16:36: Experiment log path in: /root/tecGPT/model/SAVE/GIMtec
+2025-09-12 16:36: Train Epoch 1: 0/5 Loss: 0.168459
+2025-09-12 16:36: **********Train Epoch 1: averaged Loss: 0.164025
+2025-09-12 16:36: **********Val Epoch 1: average Loss: 0.184675
+2025-09-12 16:36: *********************************Current best model saved!
+2025-09-12 16:36: Train Epoch 2: 0/5 Loss: 0.157573
+2025-09-12 16:36: **********Train Epoch 2: averaged Loss: 0.157089
+2025-09-12 16:36: **********Val Epoch 2: average Loss: 0.189909
+2025-09-12 16:36: Train Epoch 3: 0/5 Loss: 0.153942
+2025-09-12 16:36: **********Train Epoch 3: averaged Loss: 0.151929
+2025-09-12 16:36: **********Val Epoch 3: average Loss: 0.186955
+2025-09-12 16:36: Train Epoch 4: 0/5 Loss: 0.148464
+2025-09-12 16:36: **********Train Epoch 4: averaged Loss: 0.146877
+2025-09-12 16:36: **********Val Epoch 4: average Loss: 0.175751
+2025-09-12 16:36: *********************************Current best model saved!
+2025-09-12 16:36: Train Epoch 5: 0/5 Loss: 0.142825
+2025-09-12 16:37: **********Train Epoch 5: averaged Loss: 0.141192
+2025-09-12 16:37: **********Val Epoch 5: average Loss: 0.165136
+2025-09-12 16:37: *********************************Current best model saved!
+2025-09-12 16:37: Train Epoch 6: 0/5 Loss: 0.136914
+2025-09-12 16:37: **********Train Epoch 6: averaged Loss: 0.135011
+2025-09-12 16:37: **********Val Epoch 6: average Loss: 0.160385
+2025-09-12 16:37: *********************************Current best model saved!
+2025-09-12 16:37: Train Epoch 7: 0/5 Loss: 0.128200
+2025-09-12 16:37: **********Train Epoch 7: averaged Loss: 0.125768
+2025-09-12 16:37: **********Val Epoch 7: average Loss: 0.170918
+2025-09-12 16:37: Train Epoch 8: 0/5 Loss: 0.118482
+2025-09-12 16:37: **********Train Epoch 8: averaged Loss: 0.113620
+2025-09-12 16:37: **********Val Epoch 8: average Loss: 0.170772
+2025-09-12 16:37: *********************************Current best model saved!
+2025-09-12 16:37: Train Epoch 9: 0/5 Loss: 0.103079
+2025-09-12 16:37: **********Train Epoch 9: averaged Loss: 0.097383
+2025-09-12 16:37: **********Val Epoch 9: average Loss: 0.148420
+2025-09-12 16:37: *********************************Current best model saved!
+2025-09-12 16:37: Train Epoch 10: 0/5 Loss: 0.083871
+2025-09-12 16:37: **********Train Epoch 10: averaged Loss: 0.078236
+2025-09-12 16:37: **********Val Epoch 10: average Loss: 0.149760
+2025-09-12 16:37: Train Epoch 11: 0/5 Loss: 0.063361
+2025-09-12 16:37: **********Train Epoch 11: averaged Loss: 0.059972
+2025-09-12 16:37: **********Val Epoch 11: average Loss: 0.184447
+2025-09-12 16:37: Train Epoch 12: 0/5 Loss: 0.048673
+2025-09-12 16:37: **********Train Epoch 12: averaged Loss: 0.046113
+2025-09-12 16:37: **********Val Epoch 12: average Loss: 0.214804
+2025-09-12 16:37: Train Epoch 13: 0/5 Loss: 0.038341
+2025-09-12 16:37: **********Train Epoch 13: averaged Loss: 0.036115
+2025-09-12 16:37: **********Val Epoch 13: average Loss: 0.228716
+2025-09-12 16:37: Train Epoch 14: 0/5 Loss: 0.030639
+2025-09-12 16:37: **********Train Epoch 14: averaged Loss: 0.030142
+2025-09-12 16:37: **********Val Epoch 14: average Loss: 0.226517
+2025-09-12 16:37: Train Epoch 15: 0/5 Loss: 0.025592
+2025-09-12 16:37: **********Train Epoch 15: averaged Loss: 0.024287
+2025-09-12 16:37: **********Val Epoch 15: average Loss: 0.255784
+2025-09-12 16:37: Train Epoch 16: 0/5 Loss: 0.021994
+2025-09-12 16:37: **********Train Epoch 16: averaged Loss: 0.020142
+2025-09-12 16:37: **********Val Epoch 16: average Loss: 0.280187
+2025-09-12 16:37: Train Epoch 17: 0/5 Loss: 0.016697
+2025-09-12 16:38: **********Train Epoch 17: averaged Loss: 0.015459
+2025-09-12 16:38: **********Val Epoch 17: average Loss: 0.310311
+2025-09-12 16:38: Train Epoch 18: 0/5 Loss: 0.013541
+2025-09-12 16:38: **********Train Epoch 18: averaged Loss: 0.012427
+2025-09-12 16:38: **********Val Epoch 18: average Loss: 0.336184
+2025-09-12 16:38: Train Epoch 19: 0/5 Loss: 0.010692
+2025-09-12 16:38: **********Train Epoch 19: averaged Loss: 0.009930
+2025-09-12 16:38: **********Val Epoch 19: average Loss: 0.363156
+2025-09-12 16:38: Train Epoch 20: 0/5 Loss: 0.008635
+2025-09-12 16:38: **********Train Epoch 20: averaged Loss: 0.008260
+2025-09-12 16:38: **********Val Epoch 20: average Loss: 0.372949
+2025-09-12 16:38: Train Epoch 21: 0/5 Loss: 0.007925
+2025-09-12 16:38: **********Train Epoch 21: averaged Loss: 0.007259
+2025-09-12 16:38: **********Val Epoch 21: average Loss: 0.396674
+2025-09-12 16:38: Train Epoch 22: 0/5 Loss: 0.006619
+2025-09-12 16:38: **********Train Epoch 22: averaged Loss: 0.006817
+2025-09-12 16:38: **********Val Epoch 22: average Loss: 0.401195
+2025-09-12 16:38: Train Epoch 23: 0/5 Loss: 0.005652
+2025-09-12 16:38: **********Train Epoch 23: averaged Loss: 0.005507
+2025-09-12 16:38: **********Val Epoch 23: average Loss: 0.410862
+2025-09-12 16:38: Train Epoch 24: 0/5 Loss: 0.005223
+2025-09-12 16:38: **********Train Epoch 24: averaged Loss: 0.005162
+2025-09-12 16:38: **********Val Epoch 24: average Loss: 0.414105
+2025-09-12 16:38: Train Epoch 25: 0/5 Loss: 0.004692
+2025-09-12 16:38: **********Train Epoch 25: averaged Loss: 0.004769
+2025-09-12 16:38: **********Val Epoch 25: average Loss: 0.426549
+2025-09-12 16:38: Train Epoch 26: 0/5 Loss: 0.004240
+2025-09-12 16:38: **********Train Epoch 26: averaged Loss: 0.005180
+2025-09-12 16:38: **********Val Epoch 26: average Loss: 0.461822
+2025-09-12 16:38: Train Epoch 27: 0/5 Loss: 0.004441
+2025-09-12 16:38: **********Train Epoch 27: averaged Loss: 0.004509
+2025-09-12 16:38: **********Val Epoch 27: average Loss: 0.440402
+2025-09-12 16:38: Train Epoch 28: 0/5 Loss: 0.003965
+2025-09-12 16:38: **********Train Epoch 28: averaged Loss: 0.004019
+2025-09-12 16:38: **********Val Epoch 28: average Loss: 0.458807
+2025-09-12 16:38: Train Epoch 29: 0/5 Loss: 0.003678
+2025-09-12 16:39: **********Train Epoch 29: averaged Loss: 0.003791
+2025-09-12 16:39: **********Val Epoch 29: average Loss: 0.446941
+2025-09-12 16:39: Train Epoch 30: 0/5 Loss: 0.003507
+2025-09-12 16:39: **********Train Epoch 30: averaged Loss: 0.003509
+2025-09-12 16:39: **********Val Epoch 30: average Loss: 0.458551
+2025-09-12 16:39: Train Epoch 31: 0/5 Loss: 0.003366
+2025-09-12 16:39: **********Train Epoch 31: averaged Loss: 0.003165
+2025-09-12 16:39: **********Val Epoch 31: average Loss: 0.454127
+2025-09-12 16:39: Train Epoch 32: 0/5 Loss: 0.002964
+2025-09-12 16:39: **********Train Epoch 32: averaged Loss: 0.002790
+2025-09-12 16:39: **********Val Epoch 32: average Loss: 0.446687
+2025-09-12 16:39: Train Epoch 33: 0/5 Loss: 0.002456
+2025-09-12 16:39: **********Train Epoch 33: averaged Loss: 0.002420
+2025-09-12 16:39: **********Val Epoch 33: average Loss: 0.448030
+2025-09-12 16:39: Train Epoch 34: 0/5 Loss: 0.002211
+2025-09-12 16:39: **********Train Epoch 34: averaged Loss: 0.002140
+2025-09-12 16:39: **********Val Epoch 34: average Loss: 0.452735
+2025-09-12 16:39: Validation performance didn't improve for 25 epochs. Training stops.
+2025-09-12 16:39: Total training time: 3.0111min, best loss: 0.148420
+2025-09-12 16:39: Saving current best model to /root/tecGPT/model/SAVE/GIMtec/best_model.pth
+2025-09-12 16:39: Horizon 01, MAE: 59.09, RMSE: 59.80, CORR:0.3535%
+2025-09-12 16:39: Horizon 02, MAE: 57.80, RMSE: 58.27, CORR:0.7797%
+2025-09-12 16:39: Horizon 03, MAE: 54.97, RMSE: 55.45, CORR:0.8153%
+2025-09-12 16:39: Horizon 04, MAE: 54.22, RMSE: 54.76, CORR:0.8186%
+2025-09-12 16:39: Horizon 05, MAE: 54.20, RMSE: 54.77, CORR:0.8011%
+2025-09-12 16:39: Horizon 06, MAE: 54.60, RMSE: 55.20, CORR:0.7891%
+2025-09-12 16:39: Horizon 07, MAE: 55.24, RMSE: 55.89, CORR:0.7807%
+2025-09-12 16:39: Horizon 08, MAE: 55.91, RMSE: 56.65, CORR:0.7690%
+2025-09-12 16:39: Horizon 09, MAE: 56.52, RMSE: 57.36, CORR:0.7561%
+2025-09-12 16:39: Horizon 10, MAE: 57.06, RMSE: 57.99, CORR:0.7484%
+2025-09-12 16:39: Horizon 11, MAE: 57.53, RMSE: 58.48, CORR:0.7525%
+2025-09-12 16:39: Horizon 12, MAE: 58.39, RMSE: 59.11, CORR:0.7693%
+2025-09-12 16:39: Average Horizon, MAE: 56.29, RMSE: 57.00, CORR:0.6458
+2025-09-12 16:39: ==== Year-wise Validation Metrics ====
+2025-09-12 16:39: -- Year 2013 --
+2025-09-12 16:39: Horizon 01, MAE: 53.89, RMSE: 54.93, CORR:0.3349%
+2025-09-12 16:39: Horizon 02, MAE: 54.80, RMSE: 55.49, CORR:0.6747%
+2025-09-12 16:39: Horizon 03, MAE: 53.43, RMSE: 54.24, CORR:0.6821%
+2025-09-12 16:39: Horizon 04, MAE: 53.28, RMSE: 54.26, CORR:0.6626%
+2025-09-12 16:39: Horizon 05, MAE: 53.60, RMSE: 54.69, CORR:0.6377%
+2025-09-12 16:39: Horizon 06, MAE: 54.50, RMSE: 55.67, CORR:0.6329%
+2025-09-12 16:39: Horizon 07, MAE: 55.69, RMSE: 56.95, CORR:0.6248%
+2025-09-12 16:39: Horizon 08, MAE: 57.00, RMSE: 58.40, CORR:0.6163%
+2025-09-12 16:39: Horizon 09, MAE: 58.22, RMSE: 59.81, CORR:0.6051%
+2025-09-12 16:39: Horizon 10, MAE: 59.31, RMSE: 61.06, CORR:0.5948%
+2025-09-12 16:39: Horizon 11, MAE: 59.71, RMSE: 61.58, CORR:0.6005%
+2025-09-12 16:39: Horizon 12, MAE: 57.39, RMSE: 58.84, CORR:0.6151%
+2025-09-12 16:39: Average Horizon, MAE: 55.90, RMSE: 57.22, CORR:0.6165
+2025-09-12 16:39: -- Year 2017 --
+2025-09-12 16:39: Horizon 01, MAE: 60.88, RMSE: 61.36, CORR:-0.2254%
+2025-09-12 16:39: Horizon 02, MAE: 58.67, RMSE: 59.03, CORR:0.4328%
+2025-09-12 16:39: Horizon 03, MAE: 55.26, RMSE: 55.60, CORR:0.5018%
+2025-09-12 16:39: Horizon 04, MAE: 54.25, RMSE: 54.60, CORR:0.5755%
+2025-09-12 16:39: Horizon 05, MAE: 54.00, RMSE: 54.35, CORR:0.5628%
+2025-09-12 16:39: Horizon 06, MAE: 54.11, RMSE: 54.45, CORR:0.5545%
+2025-09-12 16:39: Horizon 07, MAE: 54.40, RMSE: 54.75, CORR:0.5264%
+2025-09-12 16:39: Horizon 08, MAE: 54.75, RMSE: 55.12, CORR:0.4912%
+2025-09-12 16:39: Horizon 09, MAE: 55.09, RMSE: 55.48, CORR:0.4485%
+2025-09-12 16:39: Horizon 10, MAE: 55.38, RMSE: 55.80, CORR:0.4001%
+2025-09-12 16:39: Horizon 11, MAE: 55.84, RMSE: 56.22, CORR:0.4133%
+2025-09-12 16:39: Horizon 12, MAE: 58.19, RMSE: 58.57, CORR:0.4915%
+2025-09-12 16:39: Average Horizon, MAE: 55.90, RMSE: 56.32, CORR:0.2990
+2025-09-12 16:39: ==== Year-wise Test Metrics ====
+2025-09-12 16:39: -- Year 2015 --
+2025-09-12 16:39: Horizon 01, MAE: 54.56, RMSE: 55.67, CORR:0.2843%
+2025-09-12 16:39: Horizon 02, MAE: 55.22, RMSE: 55.91, CORR:0.7126%
+2025-09-12 16:39: Horizon 03, MAE: 53.59, RMSE: 54.37, CORR:0.7502%
+2025-09-12 16:39: Horizon 04, MAE: 53.37, RMSE: 54.29, CORR:0.7448%
+2025-09-12 16:39: Horizon 05, MAE: 53.69, RMSE: 54.72, CORR:0.7164%
+2025-09-12 16:39: Horizon 06, MAE: 54.58, RMSE: 55.72, CORR:0.7011%
+2025-09-12 16:39: Horizon 07, MAE: 55.86, RMSE: 57.12, CORR:0.6983%
+2025-09-12 16:39: Horizon 08, MAE: 57.17, RMSE: 58.60, CORR:0.6920%
+2025-09-12 16:39: Horizon 09, MAE: 58.32, RMSE: 59.91, CORR:0.6842%
+2025-09-12 16:39: Horizon 10, MAE: 59.36, RMSE: 61.07, CORR:0.6747%
+2025-09-12 16:39: Horizon 11, MAE: 59.80, RMSE: 61.59, CORR:0.6768%
+2025-09-12 16:39: Horizon 12, MAE: 57.74, RMSE: 59.12, CORR:0.6901%
+2025-09-12 16:39: Average Horizon, MAE: 56.11, RMSE: 57.40, CORR:0.6427
+2025-09-12 16:39: -- Year 2019 --
+2025-09-12 16:39: Horizon 01, MAE: 62.82, RMSE: 63.11, CORR:-0.3318%
+2025-09-12 16:39: Horizon 02, MAE: 60.24, RMSE: 60.48, CORR:0.4586%
+2025-09-12 16:39: Horizon 03, MAE: 56.57, RMSE: 56.82, CORR:0.5522%
+2025-09-12 16:39: Horizon 04, MAE: 55.45, RMSE: 55.71, CORR:0.6366%
+2025-09-12 16:39: Horizon 05, MAE: 55.18, RMSE: 55.43, CORR:0.6122%
+2025-09-12 16:39: Horizon 06, MAE: 55.30, RMSE: 55.54, CORR:0.6008%
+2025-09-12 16:39: Horizon 07, MAE: 55.57, RMSE: 55.83, CORR:0.5610%
+2025-09-12 16:39: Horizon 08, MAE: 55.81, RMSE: 56.11, CORR:0.5174%
+2025-09-12 16:39: Horizon 09, MAE: 55.96, RMSE: 56.32, CORR:0.4559%
+2025-09-12 16:39: Horizon 10, MAE: 56.03, RMSE: 56.43, CORR:0.3642%
+2025-09-12 16:39: Horizon 11, MAE: 56.43, RMSE: 56.80, CORR:0.4066%
+2025-09-12 16:39: Horizon 12, MAE: 59.29, RMSE: 59.58, CORR:0.5419%
+2025-09-12 16:39: Average Horizon, MAE: 57.05, RMSE: 57.39, CORR:0.1522
+2025-09-12 16:39: -- Year 2020 --
+2025-09-12 16:39: Horizon 01, MAE: 62.31, RMSE: 62.64, CORR:-0.2062%
+2025-09-12 16:39: Horizon 02, MAE: 59.77, RMSE: 60.05, CORR:0.5130%
+2025-09-12 16:39: Horizon 03, MAE: 56.15, RMSE: 56.44, CORR:0.5833%
+2025-09-12 16:39: Horizon 04, MAE: 55.08, RMSE: 55.36, CORR:0.6630%
+2025-09-12 16:39: Horizon 05, MAE: 54.85, RMSE: 55.13, CORR:0.6396%
+2025-09-12 16:39: Horizon 06, MAE: 54.99, RMSE: 55.26, CORR:0.6169%
+2025-09-12 16:39: Horizon 07, MAE: 55.30, RMSE: 55.58, CORR:0.5795%
+2025-09-12 16:39: Horizon 08, MAE: 55.61, RMSE: 55.92, CORR:0.5438%
+2025-09-12 16:39: Horizon 09, MAE: 55.84, RMSE: 56.20, CORR:0.5005%
+2025-09-12 16:39: Horizon 10, MAE: 56.00, RMSE: 56.39, CORR:0.4393%
+2025-09-12 16:39: Horizon 11, MAE: 56.42, RMSE: 56.78, CORR:0.4538%
+2025-09-12 16:39: Horizon 12, MAE: 59.11, RMSE: 59.42, CORR:0.5558%
+2025-09-12 16:39: Average Horizon, MAE: 56.79, RMSE: 57.14, CORR:0.2477
+2025-09-12 16:39: -- Year 2021 --
+2025-09-12 16:39: Horizon 01, MAE: 60.55, RMSE: 61.02, CORR:-0.1271%
+2025-09-12 16:39: Horizon 02, MAE: 58.36, RMSE: 58.71, CORR:0.5526%
+2025-09-12 16:39: Horizon 03, MAE: 54.96, RMSE: 55.31, CORR:0.5993%
+2025-09-12 16:39: Horizon 04, MAE: 53.97, RMSE: 54.32, CORR:0.6410%
+2025-09-12 16:39: Horizon 05, MAE: 53.77, RMSE: 54.12, CORR:0.6249%
+2025-09-12 16:39: Horizon 06, MAE: 53.94, RMSE: 54.28, CORR:0.6198%
+2025-09-12 16:39: Horizon 07, MAE: 54.27, RMSE: 54.61, CORR:0.6107%
+2025-09-12 16:39: Horizon 08, MAE: 54.61, RMSE: 54.98, CORR:0.5961%
+2025-09-12 16:39: Horizon 09, MAE: 54.96, RMSE: 55.36, CORR:0.5634%
+2025-09-12 16:39: Horizon 10, MAE: 55.29, RMSE: 55.70, CORR:0.5229%
+2025-09-12 16:39: Horizon 11, MAE: 55.77, RMSE: 56.14, CORR:0.5410%
+2025-09-12 16:39: Horizon 12, MAE: 58.04, RMSE: 58.42, CORR:0.5781%
+2025-09-12 16:39: Average Horizon, MAE: 55.71, RMSE: 56.12, CORR:0.3734
+2025-09-12 16:39: -- Year 2022 --
+2025-09-12 16:39: Horizon 01, MAE: 55.20, RMSE: 56.14, CORR:0.1557%
+2025-09-12 16:39: Horizon 02, MAE: 55.41, RMSE: 56.03, CORR:0.6713%
+2025-09-12 16:39: Horizon 03, MAE: 53.56, RMSE: 54.27, CORR:0.7149%
+2025-09-12 16:39: Horizon 04, MAE: 53.25, RMSE: 54.09, CORR:0.7177%
+2025-09-12 16:39: Horizon 05, MAE: 53.49, RMSE: 54.42, CORR:0.6932%
+2025-09-12 16:39: Horizon 06, MAE: 54.18, RMSE: 55.19, CORR:0.6781%
+2025-09-12 16:39: Horizon 07, MAE: 55.18, RMSE: 56.29, CORR:0.6708%
+2025-09-12 16:39: Horizon 08, MAE: 56.33, RMSE: 57.58, CORR:0.6649%
+2025-09-12 16:39: Horizon 09, MAE: 57.49, RMSE: 58.90, CORR:0.6547%
+2025-09-12 16:39: Horizon 10, MAE: 58.63, RMSE: 60.17, CORR:0.6475%
+2025-09-12 16:39: Horizon 11, MAE: 59.22, RMSE: 60.86, CORR:0.6528%
+2025-09-12 16:39: Horizon 12, MAE: 57.76, RMSE: 59.02, CORR:0.6657%
+2025-09-12 16:39: Average Horizon, MAE: 55.81, RMSE: 56.96, CORR:0.5858
