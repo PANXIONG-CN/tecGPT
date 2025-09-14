@@ -33,27 +33,54 @@ def Mkdir(path):
         os.makedirs(path)
 
 args = parse_args(device)
-args_predictor = get_predictor_params(args)
 if args.mode !='pretrain':
+    args_predictor = get_predictor_params(args)
+    # Minimal override rule: if user explicitly passed certain single-hyphen flags
+    # on the CLI, do NOT let predictor args overwrite them.
+    cli_tokens = set(sys.argv[1:])
+    protected_map = {
+        '-epochs': 'epochs',
+        '-batch_size': 'batch_size',
+        '-val_ratio': 'val_ratio',
+        '-test_ratio': 'test_ratio',
+        '-amp': 'amp',
+    }
+    protected_keys = {v for k, v in protected_map.items() if k in cli_tokens}
     attr_list = []
     for arg in vars(args):
         attr_list.append(arg)
     for attr in attr_list:
         if hasattr(args, attr) and hasattr(args_predictor, attr):
+            if attr in protected_keys:
+                # keep user-specified main arg value
+                continue
             setattr(args, attr, getattr(args_predictor, attr))
-    for arg in vars(args):
-        print(arg, ':', getattr(args, arg))
-    print('==========')
+else:
+    args_predictor = None
+
+# print effective arguments
+for arg in vars(args):
+    print(arg, ':', getattr(args, arg))
+print('==========')
+if args_predictor is not None:
     for arg in vars(args_predictor):
         print(arg, ':', getattr(args_predictor, arg))
 init_seed(args.seed, args.seed_mode)
 
-print('mode: ', args.mode, '  model: ', args.model, '  dataset: ', args.dataset, '  load_pretrain_path: ', args.load_pretrain_path, '  save_pretrain_path: ', args.save_pretrain_path)
+model_label = 'gptst' if args.mode == 'pretrain' else args.model
+print('mode: ', args.mode, '  model: ', model_label, '  dataset: ', args.dataset, '  load_pretrain_path: ', args.load_pretrain_path, '  save_pretrain_path: ', args.save_pretrain_path)
 
 
-#config log path -> repo root Output/<DATASET>/<MODEL>
+# config log path
+# - pretrain outputs are predictor-agnostic → save under Output/<DATASET>/pretrain
+# - others keep Output/<DATASET>/<MODEL>
 repo_root = file_dir
-log_dir = os.path.join(repo_root,'Output', args.dataset, args.model)
+if args.mode == 'pretrain':
+    # use explicit arch tag rather than overriding model name
+    args.arch_tag = 'gptst'
+    log_dir = os.path.join(repo_root, 'Output', args.dataset, 'pretrain')
+else:
+    log_dir = os.path.join(repo_root, 'Output', args.dataset, args.model)
 Mkdir(log_dir)
 args.log_dir = log_dir
 args.load_pretrain_path = args.load_pretrain_path
@@ -115,23 +142,27 @@ def scaler_huber_loss(scaler, mask_value):
         return mae, mae_loss
     return loss
 
-if args.loss_func == 'mask_mae':
-    loss = scaler_mae_loss(scaler_data, mask_value=args.mape_thresh)
-    print('============================scaler_mae_loss')
-elif args.loss_func == 'mask_huber':
-    if args.mode != 'pretrain':
-        loss = scaler_huber_loss(scaler_data, mask_value=args.mape_thresh)
-        print('============================scaler_huber_loss')
+if args.mode == 'pretrain':
+    # For pretrain, always use mask-aware loss with scaler; fallback to huber if requested.
+    if args.loss_func == 'mask_huber':
+        loss = scaler_huber_loss(scaler_data, mask_value=None)
+        print('============================scaler_huber_loss (pretrain)')
     else:
+        loss = scaler_mae_loss(scaler_data, mask_value=None)
+        print('============================scaler_mae_loss (pretrain)')
+else:
+    if args.loss_func == 'mask_mae':
         loss = scaler_mae_loss(scaler_data, mask_value=args.mape_thresh)
         print('============================scaler_mae_loss')
-    # print(args.model, Mode)
-elif args.loss_func == 'mae':
-    loss = torch.nn.L1Loss().to(args.device)
-elif args.loss_func == 'mse':
-    loss = torch.nn.MSELoss().to(args.device)
-else:
-    raise ValueError
+    elif args.loss_func == 'mask_huber':
+        loss = scaler_huber_loss(scaler_data, mask_value=args.mape_thresh)
+        print('============================scaler_huber_loss')
+    elif args.loss_func == 'mae':
+        loss = torch.nn.L1Loss().to(args.device)
+    elif args.loss_func == 'mse':
+        loss = torch.nn.MSELoss().to(args.device)
+    else:
+        raise ValueError
 loss_kl = nn.KLDivLoss(reduction='sum').to(args.device)
 
 # optimizer
@@ -196,11 +227,12 @@ elif args.mode == 'test':
                  save_arrays=True, save_tag='test', log_filename=getattr(trainer,'log_filename',None))
     # Year-wise evaluation for GIMtec + CSA_WTConvLSTM to match original repo analysis
     try:
-        if getattr(args, 'model', None) == 'CSA_WTConvLSTM' and args.dataset.lower() in ['gimtec', 'tec']:
-            from lib.eval_gimtec_yearwise import evaluate_per_year
-            evaluate_per_year(model, trainer)
-        # Optimized model also uses vendor pipeline; optionally save JSON metrics aligned with log filename
-        if getattr(args, 'save_json', False) and args.dataset.lower() in ['gimtec', 'tec']:
+        if args.dataset.lower() in ['gimtec', 'tec']:
+            # Run year-wise log for CSA (optional): keep compatibility
+            if getattr(args, 'model', None) == 'CSA_WTConvLSTM':
+                from lib.eval_gimtec_yearwise import evaluate_per_year
+                evaluate_per_year(model, trainer)
+            # Always produce JSON for GIMtec/TEC in test mode
             from lib.eval_gimtec_yearwise import compute_yearwise_metrics
             metrics = compute_yearwise_metrics(model, trainer)
             import json, os

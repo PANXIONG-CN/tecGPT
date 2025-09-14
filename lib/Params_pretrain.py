@@ -61,6 +61,7 @@ def parse_args(device):
     args.add_argument('-grad_norm', default=config['train']['grad_norm'], type=eval)
     args.add_argument('-max_grad_norm', default=config['train']['max_grad_norm'], type=int)
     args.add_argument('-debug', default=config['train']['debug'], type=eval)
+    args.add_argument('-debug_max_steps', default=1000, type=int, help='limit per-segment timesteps when debug=True')
     args.add_argument('-real_value', default=config['train']['real_value'], type=eval, help='use real value for loss calculation')
     # optimizer/scheduler options (to support VendorCode strategy)
     args.add_argument('-optimizer', default=config['train'].get('optimizer', fallback='adam'), type=str)
@@ -87,6 +88,14 @@ def parse_args(device):
     args.add_argument('-xavier', default=config['train']['xavier'], type=eval)
     args.add_argument('-load_pretrain_path', default=config['train']['load_pretrain_path'], type=str)
     args.add_argument('-save_pretrain_path', default=config['train']['save_pretrain_path'], type=str)
+    # pretrain-specific dataloader options for GIMtec
+    args.add_argument('-stride_horizon', default=False, type=eval, help='use stride=horizon when windowing')
+    args.add_argument('-prefix_boundary', default=True, type=eval, help='prepend lag frames at year boundaries')
+    # enable fixed year-based split for GIMtec/TEC in supervised modes as well
+    args.add_argument('-year_split', default=False, type=eval, help='use fixed year-based split (GIMtec/TEC) for supervised modes')
+    # naming tags for pretrain artifacts
+    args.add_argument('-target_model', default='generic', type=str, help='downstream predictor tag for naming only')
+    args.add_argument('-graph_tag', default='na', type=str, help='graph/adjacency tag for naming only')
     # test
     args.add_argument('-mae_thresh', default=config['test']['mae_thresh'], type=eval)
     args.add_argument('-mape_thresh', default=config['test']['mape_thresh'], type=float)

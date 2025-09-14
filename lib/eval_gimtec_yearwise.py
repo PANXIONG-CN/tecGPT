@@ -2,12 +2,23 @@ import os
 import torch
 from torch.utils.data import DataLoader, Dataset
 import numpy as np
-from lib.datasets.gimtec_vendor import _load_year, _split_data, FIXED_MIN, FIXED_MAX, H, W
+from lib.datasets.gimtec_vendor import _load_year, FIXED_MIN, FIXED_MAX, H, W
+from lib.load_dataset import time_add
 from lib.normalization import MinMax01Scaler, NScaler
 
 
 def _prefix_concat(base, prefix_src, time_step):
     return np.concatenate([prefix_src[-time_step:], base], axis=0)
+
+
+def _split_with_stride(flat: np.ndarray, lag: int, horizon: int, step: int):
+    """flat: [T, N] -> X:[B, lag, N], Y:[B, horizon, N]"""
+    X, Y = [], []
+    T = flat.shape[0]
+    for i in range(0, T - lag - horizon + 1, step):
+        X.append(flat[i:i+lag])
+        Y.append(flat[i+lag:i+lag+horizon])
+    return np.array(X), np.array(Y)
 
 
 def build_year_loader(args, year, time_step, predict_step, prefix_from=None, batch_size=None):
@@ -16,10 +27,20 @@ def build_year_loader(args, year, time_step, predict_step, prefix_from=None, bat
     if prefix_from is not None:
         y_prefix = _load_year(base_dir, prefix_from)
         y = _prefix_concat(y, y_prefix, time_step)
-    x, y_t = _split_data(y, time_step, predict_step)
-    bx, tx = x.shape[:2]
-    x = x.reshape(bx, tx, H * W, 1)
-    y_t = y_t.reshape(bx, predict_step, H * W, 1)
+    # Flatten to [T, N]
+    T_total = y.shape[0]
+    base_flat = y.reshape(T_total, H * W)
+    # Add day/week features to align with GPT-ST eval pipeline
+    interval_min = getattr(args, 'interval', 5)
+    week_start = getattr(args, 'week_start', 4)
+    day_data, week_data, _ = time_add(base_flat, week_start, interval=interval_min, weekday_only=False, holiday_list=[])
+    # Windows with step=predict_step to match vendor
+    xb, yb = _split_with_stride(base_flat, time_step, predict_step, step=predict_step)
+    xd, yd = _split_with_stride(day_data, time_step, predict_step, step=predict_step)
+    xw, yw = _split_with_stride(week_data, time_step, predict_step, step=predict_step)
+    # Compose [B, T, N, 3]
+    x = np.concatenate([xb[..., None], xd[..., None], xw[..., None]], axis=-1)
+    y_t = np.concatenate([yb[..., None], yd[..., None], yw[..., None]], axis=-1)
     ds = _TensorDataset(x, y_t)
     loader = DataLoader(ds, batch_size=(batch_size or args.batch_size), shuffle=False,
                         drop_last=False, pin_memory=torch.cuda.is_available())
@@ -96,7 +117,12 @@ def compute_yearwise_metrics(model, trainer):
             for x, y in loader:
                 x = x.to(args.device).float()
                 y = y.to(args.device).float()
-                out = model(x, label=None)[0]  # predictor returns tuple-compatible
+                # Only evaluate base channel (TECU); shape [B,T,N,1]
+                y = y[..., :1]
+                out = model(x, label=None)[0]
+                # ensure predictor output has the last dim=1 as base channel
+                if out.dim() == 3:
+                    out = out.unsqueeze(-1)
                 y_true_norm_all.append(y)
                 y_pred_norm_all.append(out)
         y_true_norm = torch.cat(y_true_norm_all, dim=0)
@@ -157,4 +183,3 @@ def compute_yearwise_metrics(model, trainer):
         overall['relative_error_percent'] = rmse_norm * 100.0
         overall['count_frames'] = total_frames
     return overall
-

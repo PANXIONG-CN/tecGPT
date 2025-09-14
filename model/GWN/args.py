@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 import configparser
@@ -27,6 +28,9 @@ def parse_args(DATASET, parser):
     parser.add_argument('--nhid', type=int, default=config['model']['nhid'])
     parser.add_argument('--residual_channels', type=int, default=config['model']['residual_channels'])
     parser.add_argument('--dilation_channels', type=int, default=config['model']['dilation_channels'])
+    # optional tags for adjacency naming
+    parser.add_argument('--graph_tag', type=str, default='grid8')
+    parser.add_argument('--adj_model', type=str, default='')
     # train
     parser.add_argument('--seed', type=int, default=config['train']['seed'])
     parser.add_argument('--seed_mode', type=eval, default=config['train']['seed_mode'])
@@ -41,9 +45,9 @@ def parse_args(DATASET, parser):
     elif DATASET == 'NYC_BIKE' or DATASET == 'NYC_TAXI':
         A = pd.read_csv(args.filepath + DATASET + '.csv', header=None).values.astype(np.float32)
     else:
-        A, Distance = get_adjacency_matrix(
-            distance_df_filename=args.filepath + DATASET + '.csv',
-            num_of_vertices=args.num_nodes)
+        # Use unified adjacency loader (model-agnostic)
+        from lib.datasets.gimtec_adj import load_or_build_adj
+        A, _ = load_or_build_adj(DATASET, args.num_nodes, graph_tag=getattr(args, 'graph_tag', 'grid8'), adj_model=getattr(args, 'adj_model', ''))
 
     args.adj_mx = A
     return args

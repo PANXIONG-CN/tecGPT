@@ -26,7 +26,19 @@ class Trainer(object):
         if val_loader != None:
             self.val_per_epoch = len(val_loader)
         # Always save best model to a fixed file name for consistency with Run.py test mode
-        self.best_path = os.path.join(self.args.log_dir, 'best_model.pth')
+        # Choose best model file name (pretrain: save named file + create symlink latest_pretrain.pth)
+        from datetime import datetime
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        if getattr(args, 'mode', '') == 'pretrain':
+            ds = getattr(args, 'dataset', 'DATASET')
+            arch = getattr(args, 'arch_tag', 'gptst')
+            tgt = getattr(args, 'target_model', 'generic')
+            gtag = getattr(args, 'graph_tag', 'na')
+            # For pretrain, we will save only named file based on log filename; self.best_path points to that path
+            base_stem = f"{ts}_{ds}_{arch}_pretrain_{tgt}_{gtag}"
+            self.best_path = os.path.join(self.args.log_dir, f"{base_stem}.pth")
+        else:
+            self.best_path = os.path.join(self.args.log_dir, 'best_model.pth')
         self.loss_figure_path = os.path.join(self.args.log_dir, 'loss.png')
         #log
         if os.path.isdir(args.log_dir) == False and not args.debug:
@@ -36,14 +48,23 @@ class Trainer(object):
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
         try:
             ds = getattr(args, 'dataset', 'DATASET')
-            md = getattr(args, 'model', 'MODEL')
             mode = getattr(args, 'mode', 'train')
-            filename = f"{ts}_{ds}_{md}_{mode}.log"
+            if mode == 'pretrain':
+                arch = getattr(args, 'arch_tag', 'gptst')
+                tgt = getattr(args, 'target_model', 'generic')
+                gtag = getattr(args, 'graph_tag', 'na')
+                filename = f"{ts}_{ds}_{arch}_{mode}_{tgt}_{gtag}.log"
+                logger_name = arch
+            else:
+                md = getattr(args, 'model', 'MODEL')
+                filename = f"{ts}_{ds}_{md}_{mode}.log"
+                logger_name = md
         except Exception:
             filename = f"{ts}_run.log"
+            logger_name = getattr(args, 'model', 'run')
         self.log_filename = filename
         self.log_filename = filename
-        self.logger = get_logger(args.log_dir, name=args.model, debug=args.debug, filename=filename)
+        self.logger = get_logger(args.log_dir, name=logger_name, debug=args.debug, filename=filename)
         self.logger.info('Experiment log path in: {}'.format(args.log_dir))
         # log command line and basic env/device info
         try:
@@ -89,8 +110,9 @@ class Trainer(object):
                     loss, loss_base = self.loss(output, label[..., :self.args.output_dim], mask)
                 else:
                     res = self.loss(output, label[..., :self.args.output_dim])
-                    loss = res[1] if isinstance(res, tuple) else res
-                if not torch.isnan(loss):
+                    loss = res[0] if isinstance(res, tuple) else res
+                # accumulate only finite losses
+                if torch.isfinite(loss).item():
                     total_val_loss += loss.item()
         val_loss = total_val_loss / len(val_dataloader)
         self.logger.info('**********Val Epoch {}: average Loss: {:.6f}'.format(epoch, val_loss))
@@ -131,7 +153,8 @@ class Trainer(object):
                 with torch.cuda.amp.autocast(enabled=use_amp):
                     out, out_time, mask, probability, eb2 = self.model(data, label, self.batch_seen)
                     res = self.loss(out, label[..., :self.args.output_dim])
-                    loss = res[1] if isinstance(res, tuple) else res
+                    # loss functions may return (mean_loss, elementwise) tuples (e.g., mask_mae)
+                    loss = res[0] if isinstance(res, tuple) else res
 
             loss_to_back = loss / accum
             if use_amp:
@@ -244,37 +267,62 @@ class Trainer(object):
 
         # Save the best model to file (always)
         try:
-            if 'best_model' in locals():
-                torch.save(best_model, self.best_path)
-                self.logger.info("Saving current best model to " + self.best_path)
-                # also save with log prefix name
+            target_state = best_model if 'best_model' in locals() else self.model.state_dict()
+            # pretrain: save named + symlink latest_pretrain.pth; supervised: save best_model.pth
+            if getattr(self.args, 'mode', '') == 'pretrain':
+                # save named
+                torch.save(target_state, self.best_path)
+                self.logger.info("Saving pretrain model to " + self.best_path)
+                # create/refresh symlink latest_pretrain.pth
                 try:
-                    import os
-                    base_stem = os.path.splitext(self.log_filename)[0] if hasattr(self, 'log_filename') else None
-                    if base_stem:
-                        named_pth = os.path.join(self.args.log_dir, f"{base_stem}.pth")
-                        torch.save(best_model, named_pth)
-                        self.logger.info("Saving named best model to " + named_pth)
+                    import os as _os
+                    latest_link = _os.path.join(self.args.log_dir, 'latest_pretrain.pth')
+                    if _os.path.islink(latest_link) or _os.path.exists(latest_link):
+                        try:
+                            _os.remove(latest_link)
+                        except Exception:
+                            pass
+                    _os.symlink(_os.path.basename(self.best_path), latest_link)
+                    self.logger.info("Updated symlink -> latest_pretrain.pth")
                 except Exception as e:
-                    self.logger.warning(f"Failed to save named best model: {e}")
+                    self.logger.warning(f"Failed to create latest_pretrain.pth symlink: {e}")
             else:
-                torch.save(self.model.state_dict(), self.best_path)
-                self.logger.info("Saving current model to " + self.best_path)
+                # supervised: save with log basename and create/refresh symlink best_model.pth
+                try:
+                    import os as _os
+                    base_stem = _os.path.splitext(self.log_filename)[0] if hasattr(self, 'log_filename') else 'supervised_best'
+                    named_pth = _os.path.join(self.args.log_dir, f"{base_stem}.pth")
+                    torch.save(target_state, named_pth)
+                    self.logger.info("Saving current model to " + named_pth)
+                    # symlink best_model.pth -> named file
+                    best_link = _os.path.join(self.args.log_dir, 'best_model.pth')
+                    try:
+                        if _os.path.islink(best_link) or _os.path.exists(best_link):
+                            _os.remove(best_link)
+                        _os.symlink(_os.path.basename(named_pth), best_link)
+                        self.logger.info("Updated symlink -> best_model.pth")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to create best_model.pth symlink: {e}")
+                except Exception as e:
+                    # fallback to legacy path
+                    torch.save(target_state, self.best_path)
+                    self.logger.info("Saving current model to " + self.best_path)
         except Exception as e:
-            self.logger.warning(f"Failed to save best model: {e}")
+            self.logger.warning(f"Failed to save model: {e}")
 
         #test
         # self.model.load_state_dict(best_model)
         #self.val_epoch(self.args.epochs, self.test_loader)
         if self.args.mode == 'pretrain':
-            self.test(best_model_test, self.args, self.train_loader, self.scaler, self.logger)
+            model_for_test = best_model_test if best_model_test is not None else self.model
+            self.test(model_for_test, self.args, self.train_loader, self.scaler, self.logger)
         else:
-            # save arrays for test and val (if any)
+            # save arrays: default save test only (float16); disable val arrays by default
             self.test(best_model_test, self.args, self.test_loader, self.scaler, self.logger,
                       save_arrays=True, save_tag='test', log_filename=self.log_filename)
             if self.val_loader is not None:
                 self.test(best_model_test, self.args, self.val_loader, self.scaler, self.logger,
-                          save_arrays=True, save_tag='val', log_filename=self.log_filename)
+                          save_arrays=False, save_tag='val', log_filename=self.log_filename)
             # Optional: year-wise evaluation for GIMtec + CSA_WTConvLSTM to match original repo analysis
             try:
                 if getattr(self.args, 'model', None) == 'CSA_WTConvLSTM' and self.args.dataset.lower() in ['gimtec', 'tec']:
@@ -335,7 +383,8 @@ class Trainer(object):
         y_true = scaler.inverse_transform(torch.cat(y_true, dim=0))
         y_pred = scaler.inverse_transform(torch.cat(y_pred, dim=0))
 
-        disable_mape = (getattr(args, 'model', None) == 'CSA_WTConvLSTM' and args.dataset.lower() in ['gimtec', 'tec'])
+        # For GIMtec/TEC datasets, align reporting with CSA pipeline: drop MAPE from logs
+        disable_mape = (args.dataset.lower() in ['gimtec', 'tec'])
 
         if disable_mape:
             # Log MAE/RMSE/CORR only (align with original CSA repo). Values already in TECU.
@@ -359,13 +408,15 @@ class Trainer(object):
             logger.info("Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}%, CORR:{:.4f}".format(
                         mae, rmse, mape*100, corr))
 
-        # optionally save arrays for reproduction
+        # optionally save arrays for reproduction (float16 to reduce size)
         if save_arrays and log_filename:
             try:
                 import numpy as np, os
                 base_stem = os.path.splitext(log_filename)[0]
-                np.save(os.path.join(args.log_dir, f"{base_stem}_{save_tag}_preds.npy"), y_pred.cpu().numpy())
-                np.save(os.path.join(args.log_dir, f"{base_stem}_{save_tag}_true.npy"), y_true.cpu().numpy())
-                logger.info(f"Saved arrays: {base_stem}_{save_tag}_preds.npy / true.npy")
+                np.save(os.path.join(args.log_dir, f"{base_stem}_{save_tag}_preds.npy"),
+                        y_pred.detach().cpu().to(torch.float16).numpy())
+                # Do not save ground-truth arrays by default since they are fully deterministic
+                # and can be regenerated from the dataset split/windowing.
+                logger.info(f"Saved arrays: {base_stem}_{save_tag}_preds.npy (true not saved)")
             except Exception as e:
                 logger.warning(f"Failed to save arrays: {e}")

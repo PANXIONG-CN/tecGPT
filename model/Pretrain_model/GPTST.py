@@ -65,7 +65,8 @@ class cap_adj(nn.Module):
         temp_u_hat = Dcaps_in.detach()
 
         # Routing
-        b = torch.zeros(batch_size, self.timesteps, self.HS, self.num_nodes, 1).to('cuda:0')
+        device = x.device
+        b = torch.zeros(batch_size, self.timesteps, self.HS, self.num_nodes, 1, device=device)
         for route_iter in range(self.num_route):
             c = b.softmax(dim=2)
             s = (c * temp_u_hat).sum(-2)
@@ -109,7 +110,8 @@ class cap(nn.Module):
         temp_u_hat = Dcaps_in.detach()
 
         # Routing
-        b = torch.zeros(batch_size, self.timesteps, self.HS, self.num_nodes, 1).to('cuda:0')
+        device = x.device
+        b = torch.zeros(batch_size, self.timesteps, self.HS, self.num_nodes, 1, device=device)
         for route_iter in range(self.num_route):
             c = b.softmax(dim=2)
             s = (c * temp_u_hat).sum(-2)
@@ -302,7 +304,7 @@ class Hypergraph_encoder(nn.Module):
         self.dim_in_flow = nn.Linear(self.input_base_dim, self.hidden_dim, bias=True)
 
         self.STHCN_encode = STHCN(args)
-        self.hyperguide1 = torch.randn(self.hidden_dim, self.horizon, self.HS, self.num_node).to('cuda:0')
+        self.hyperguide1 = torch.randn(self.hidden_dim, self.horizon, self.HS, self.num_node, device=self.device)
         self.MLP_RL = MLP_RL(args.input_base_dim, self.HS, self.hidden_dim, self.embed_dim, self.device)
         self.teb4mask = time_feature(self.embed_dim)
         self.neb4mask = nn.Parameter(torch.randn(self.num_node, self.embed_dim), requires_grad=True)
@@ -313,7 +315,7 @@ class Hypergraph_encoder(nn.Module):
         if self.mode == 'pretrain':
             if epoch <= self.change_epoch:
                 # random mask sta2
-                mask_random_init = torch.rand_like(source[..., 0:self.input_base_dim].reshape(-1)).to('cuda:0')
+                mask_random_init = torch.rand_like(source[..., 0:self.input_base_dim].reshape(-1), device=source.device)
                 _, max_idx_random = torch.sort(mask_random_init, dim=0, descending=True)
                 mask_num = int(mask_random_init.shape[0] * self.mask_ratio)
                 max_idx = max_idx_random[:mask_num]  # NYC_TAXI
@@ -386,7 +388,7 @@ class Hypergraph_encoder(nn.Module):
                 # randomly choose top adaptive_mask_num to mask
                 select_f = select_f.reshape(-1, self.horizon*self.num_node).reshape(-1)
                 select_d = select_d.reshape(-1, self.horizon*self.num_node).reshape(-1)
-                mask_adaptive_init = torch.rand_like(source[..., 0:1].reshape(-1)).to('cuda:0')
+                mask_adaptive_init = torch.rand_like(source[..., 0:1].reshape(-1), device=source.device)
                 mask_adaptive_init = select_f * mask_adaptive_init
                 _, max_idx_adaptive = torch.sort(mask_adaptive_init, dim=0, descending=True)
 
@@ -397,7 +399,7 @@ class Hypergraph_encoder(nn.Module):
                 mask_adaptive = mask_adaptive * (1-select_d)
 
                 # random mask
-                mask_random_init = torch.rand_like(source[..., 0:1].reshape(-1)).to('cuda:0')
+                mask_random_init = torch.rand_like(source[..., 0:1].reshape(-1), device=source.device)
                 mask_random_init = mask_adaptive * mask_random_init
                 _, max_idx_random = torch.sort(mask_random_init, dim=0, descending=True)
 

@@ -169,9 +169,30 @@ def get_dataloader(args, normalizer = 'std', tod=False, dow=False, weather=False
     ds_key = str(getattr(args, 'dataset', '')).lower()
     ds_base = ds_key.split('_')[0] if ds_key else ''
     model_key = str(getattr(args, 'model', '')).lower()
-    if model_key in ['csa_wtconvlstm', 'optimizedcsa_wtconvlstm'] and ds_base in ['gimtec', 'tec']:
-        from lib.datasets.gimtec_vendor import build_csa_vendor_dataloaders
-        return build_csa_vendor_dataloaders(args)
+    # CSA 原版仍使用 vendor 流水线；Optimized 版改为“年段+流式+stride=1”对齐预训练
+    if ds_base in ['gimtec', 'tec']:
+        if model_key == 'csa_wtconvlstm':
+            from lib.datasets.gimtec_vendor import build_csa_vendor_dataloaders
+            return build_csa_vendor_dataloaders(args)
+        if model_key == 'optimizedcsa_wtconvlstm':
+            from lib.datasets.gimtec_pretrain import build_gimtec_pretrain_dataloaders
+            # 强制 stride=1，对齐你当前策略；边界前缀默认 True
+            return build_gimtec_pretrain_dataloaders(args, normalizer=normalizer, single=single,
+                                                     stride=1, prefix_boundary=True)
+    # GPT-ST 预训练：GIMtec/TEC 按年份划分的专用管线
+    if getattr(args, 'mode', '') == 'pretrain' and ds_base in ['gimtec', 'tec']:
+        from lib.datasets.gimtec_pretrain import build_gimtec_pretrain_dataloaders
+        stride = args.horizon if getattr(args, 'stride_horizon', False) else 1
+        prefix_boundary = getattr(args, 'prefix_boundary', True)
+        return build_gimtec_pretrain_dataloaders(args, normalizer=normalizer, single=single,
+                                                 stride=stride, prefix_boundary=prefix_boundary)
+    # 监督预测可选：与预训练一致的“按年段”切分（GIMtec/TEC）
+    if getattr(args, 'mode', '') != 'pretrain' and ds_base in ['gimtec', 'tec'] and getattr(args, 'year_split', False):
+        from lib.datasets.gimtec_pretrain import build_gimtec_pretrain_dataloaders
+        stride = args.horizon if getattr(args, 'stride_horizon', False) else 1
+        prefix_boundary = getattr(args, 'prefix_boundary', True)
+        return build_gimtec_pretrain_dataloaders(args, normalizer=normalizer, single=single,
+                                                 stride=stride, prefix_boundary=prefix_boundary)
     # load raw st dataset: [T, N, D]
     data = load_st_dataset(args.dataset, args)
 
