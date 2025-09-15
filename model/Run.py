@@ -246,3 +246,9 @@ elif args.mode == 'test':
         print('Year-wise evaluation skipped due to error:', e)
 else:
     raise ValueError
+# 确认 GIMtec/TEC 的时间分辨率（每帧≈2小时）
+try:
+    if str(getattr(args, 'dataset', '')).lower() in ['gimtec', 'tec']:
+        args.interval = 120
+except Exception:
+    pass

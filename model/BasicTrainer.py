@@ -25,21 +25,11 @@ class Trainer(object):
         self.batch_seen = 0
         if val_loader != None:
             self.val_per_epoch = len(val_loader)
-        # Always save best model to a fixed file name for consistency with Run.py test mode
-        # Choose best model file name (pretrain: save named file + create symlink latest_pretrain.pth)
-        from datetime import datetime
-        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-        if getattr(args, 'mode', '') == 'pretrain':
-            ds = getattr(args, 'dataset', 'DATASET')
-            arch = getattr(args, 'arch_tag', 'gptst')
-            tgt = getattr(args, 'target_model', 'generic')
-            gtag = getattr(args, 'graph_tag', 'na')
-            # For pretrain, we will save only named file based on log filename; self.best_path points to that path
-            base_stem = f"{ts}_{ds}_{arch}_pretrain_{tgt}_{gtag}"
-            self.best_path = os.path.join(self.args.log_dir, f"{base_stem}.pth")
-        else:
-            self.best_path = os.path.join(self.args.log_dir, 'best_model.pth')
-        self.loss_figure_path = os.path.join(self.args.log_dir, 'loss.png')
+        # Best checkpoint naming will be initialized after logger is created
+        self.best_run_path = None
+        self.best_link_path = None
+        self.best_path = None
+        self.loss_figure_path = None
         #log
         if os.path.isdir(args.log_dir) == False and not args.debug:
             os.makedirs(args.log_dir, exist_ok=True)
@@ -62,7 +52,6 @@ class Trainer(object):
         except Exception:
             filename = f"{ts}_run.log"
             logger_name = getattr(args, 'model', 'run')
-        self.log_filename = filename
         self.log_filename = filename
         self.logger = get_logger(args.log_dir, name=logger_name, debug=args.debug, filename=filename)
         self.logger.info('Experiment log path in: {}'.format(args.log_dir))
@@ -88,9 +77,32 @@ class Trainer(object):
         # for arg, value in sorted(vars(args).items()):
         #     self.logger.info("Argument %s: %r", arg, value)
 
+        # Initialize best checkpoint naming now that log_filename is known
+        from datetime import datetime
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        base_stem = os.path.splitext(self.log_filename)[0] if getattr(self, 'log_filename', '') else ''
+        if not base_stem:
+            # Fallback naming
+            ds = getattr(args, 'dataset', 'DATASET')
+            md = getattr(args, 'model', 'MODEL')
+            mode = getattr(args, 'mode', 'train')
+            # Pretrain uses arch tag
+            if mode == 'pretrain':
+                arch = getattr(args, 'arch_tag', 'gptst')
+                tgt = getattr(args, 'target_model', 'generic')
+                gtag = getattr(args, 'graph_tag', 'na')
+                base_stem = f"{ts}_{ds}_{arch}_{mode}_{tgt}_{gtag}"
+            else:
+                base_stem = f"{ts}_{ds}_{md}_{mode}"
+        self.best_run_path = os.path.join(self.args.log_dir, f"{base_stem}.pth")
+        self.best_link_path = os.path.join(self.args.log_dir, 'best_model.pth')
+        self.best_path = self.best_run_path
+        self.loss_figure_path = os.path.join(self.args.log_dir, 'loss.png')
+
     def val_epoch(self, epoch, val_dataloader):
         self.model.eval()
         total_val_loss = 0
+        count_steps = 0
         # val_pred = []
         # val_true = []
 
@@ -114,7 +126,9 @@ class Trainer(object):
                 # accumulate only finite losses
                 if torch.isfinite(loss).item():
                     total_val_loss += loss.item()
-        val_loss = total_val_loss / len(val_dataloader)
+                    count_steps += 1
+        denom = count_steps if count_steps > 0 else max(1, len(val_dataloader))
+        val_loss = total_val_loss / denom
         self.logger.info('**********Val Epoch {}: average Loss: {:.6f}'.format(epoch, val_loss))
 
         return val_loss
@@ -122,6 +136,7 @@ class Trainer(object):
     def train_epoch(self, epoch):
         self.model.train()
         total_loss = 0
+        count_steps = 0
         total_flow_loss = 0
         total_s_loss = 0
         use_amp = getattr(self.args, 'amp', False)
@@ -173,7 +188,9 @@ class Trainer(object):
                     scaler.update()
                 else:
                     self.optimizer.step()
-            total_loss += loss.item()
+            if torch.isfinite(loss).item():
+                total_loss += loss.item()
+                count_steps += 1
             # calculate total loss
             if self.args.mode == 'pretrain':
                 total_flow_loss += loss_flow.item()
@@ -181,15 +198,17 @@ class Trainer(object):
                     total_s_loss += loss_s.item()
             #log information
             if batch_idx % self.args.log_step == 0:
-                self.logger.info('Train Epoch {}: {}/{} Loss: {:.6f}'.format(
-                    epoch, batch_idx, self.train_per_epoch, loss.item()))
-        train_epoch_loss = total_loss/self.train_per_epoch
+                running_avg = (total_loss / max(1, count_steps)) if 'count_steps' in locals() else loss.item()
+                self.logger.info('Train Epoch {}: {}/{} Loss: {:.6f} (running_avg: {:.6f})'.format(
+                    epoch, batch_idx, self.train_per_epoch, loss.item(), running_avg))
+        denom = count_steps if count_steps > 0 else self.train_per_epoch
+        train_epoch_loss = total_loss/denom
         if self.args.mode == 'pretrain':
             train_epoch_flow_loss = total_flow_loss/self.train_per_epoch
             train_epoch_s_loss = total_s_loss / self.train_per_epoch
             self.logger.info('**********Train Epoch {}: averaged Loss: {:.6f} averaged Loss_s: {:.6f}'.format(epoch, train_epoch_flow_loss, train_epoch_s_loss))
         else:
-            self.logger.info('**********Train Epoch {}: averaged Loss: {:.6f}'.format(epoch, train_epoch_loss))
+            self.logger.info('**********Train Epoch {}: averaged Loss: {:.6f} (per-batch mean)'.format(epoch, train_epoch_loss))
 
         # learning rate scheduling (non-plateau handled here; plateau handled in train() after val)
         if self.lr_scheduler is not None and getattr(self.args, 'scheduler', 'none') != 'plateau':
@@ -305,7 +324,8 @@ class Trainer(object):
                         self.logger.warning(f"Failed to create best_model.pth symlink: {e}")
                 except Exception as e:
                     # fallback to legacy path
-                    torch.save(target_state, self.best_path)
+                    import torch as _torch
+                    _torch.save(target_state, self.best_path)
                     self.logger.info("Saving current model to " + self.best_path)
         except Exception as e:
             self.logger.warning(f"Failed to save model: {e}")
@@ -332,11 +352,48 @@ class Trainer(object):
                 if self.args.dataset.lower() in ['gimtec', 'tec']:
                     from lib.eval_gimtec_yearwise import compute_yearwise_metrics
                     metrics = compute_yearwise_metrics(best_model_test, self)
-                    import json, os
+                    import json, os, torch
                     # derive json filename from log filename to keep naming consistent
                     base_stem = os.path.splitext(self.log_filename)[0]
                     json_name = f"{base_stem}.json"
                     out_path = os.path.join(self.args.log_dir, json_name)
+                    # Inject meta (env/oom/model/data/paths)
+                    try:
+                        preds_path = os.path.join(self.args.log_dir, f"{base_stem}_test_preds.npy")
+                        ckpt_path = getattr(self, 'best_run_path', os.path.join(self.args.log_dir, 'best_model.pth'))
+                        metrics['meta'] = {
+                            'run_name': base_stem,
+                            'paths': {
+                                'preds': preds_path,
+                                'log': os.path.join(self.args.log_dir, self.log_filename),
+                                'ckpt': ckpt_path,
+                            },
+                            'env': {
+                                'amp': 'bf16' if bool(getattr(self.args, 'amp', False)) else 'none',
+                                'tf32': bool(getattr(torch.backends.cuda.matmul, 'allow_tf32', True)),
+                                'ln_enabled': bool(getattr(self.args, 'use_ln', False)),
+                            },
+                            'oom_fallback': {
+                                'initial_batch_size': int(getattr(self.args, 'batch_size', 0)),
+                                'final_batch_size': int(getattr(self.args, 'batch_size', 0)),
+                                'events': [],
+                            },
+                            'model': {
+                                'gpt2_name': str(getattr(self.args, 'hf_model_name', 'gpt2-large')),
+                                'llm_layers': int(getattr(self.args, 'llm_layers', 0)),
+                                'frozen': True,
+                            },
+                            'data': {
+                                'dataset': str(self.args.dataset),
+                                'channels': int(getattr(self.args, 'input_base_dim', 1)),
+                                'stride': 1,
+                                'interval_minutes': int(getattr(self.args, 'interval', 120)),
+                                'lag': int(getattr(self.args, 'lag', 12)),
+                                'horizon': int(getattr(self.args, 'horizon', 12)),
+                            }
+                        }
+                    except Exception:
+                        pass
                     with open(out_path, 'w') as f:
                         json.dump(metrics, f, indent=2)
                     self.logger.info('Saved JSON metrics to {}'.format(out_path))
@@ -350,8 +407,24 @@ class Trainer(object):
             'optimizer': self.optimizer.state_dict(),
             'config': self.args
         }
-        torch.save(state, self.best_path)
-        self.logger.info("Saving current best model to " + self.best_path)
+        # Save to run_name.pth
+        torch.save(state, self.best_run_path)
+        # Update best_model.pth symlink (or copy if symlink unsupported)
+        try:
+            if os.path.islink(self.best_link_path) or os.path.exists(self.best_link_path):
+                try:
+                    os.remove(self.best_link_path)
+                except Exception:
+                    pass
+            os.symlink(os.path.basename(self.best_run_path), self.best_link_path)
+        except Exception:
+            # fallback: copy file
+            import shutil
+            try:
+                shutil.copyfile(self.best_run_path, self.best_link_path)
+            except Exception:
+                pass
+        self.logger.info("Saving current best model to " + self.best_run_path + " (link: best_model.pth)")
 
     @staticmethod
     def test(model, args, data_loader, scaler, logger, path=None, save_arrays=False, save_tag='test', log_filename=None):
@@ -386,27 +459,60 @@ class Trainer(object):
         # For GIMtec/TEC datasets, align reporting with CSA pipeline: drop MAPE from logs
         disable_mape = (args.dataset.lower() in ['gimtec', 'tec'])
 
+        def _corr_with_ratio(pred_t, true_t, mask_value=None):
+            # Harmonize shapes like CORR_torch
+            x, y = pred_t, true_t
+            if x.dim() == 2:  # [B,N]
+                x = x.unsqueeze(1).unsqueeze(1); y = y.unsqueeze(1).unsqueeze(1)
+            elif x.dim() == 3:  # [B,T,N]
+                x = x.transpose(1, 2).unsqueeze(1); y = y.transpose(1, 2).unsqueeze(1)
+            elif x.dim() == 4:  # [B,T,N,D]
+                x = x.transpose(2, 3); y = y.transpose(2, 3)
+            dims = (0, 1, 2)
+            xm = x.mean(dim=dims); ym = y.mean(dim=dims)
+            xs = x.std(dim=dims); ys = y.std(dim=dims)
+            numer = ((x - xm)*(y - ym)).mean(dim=dims)
+            denom = (xs*ys)
+            corr = numer / denom
+            valid = torch.isfinite(corr) & torch.isfinite(denom) & (ys != 0)
+            if valid.numel() == 0:
+                return float('nan'), 0.0
+            valid_vals = corr[valid]
+            ratio = float(valid.float().mean().item())
+            if valid_vals.numel() == 0:
+                return float('nan'), ratio
+            return float(torch.nanmean(valid_vals).item()), ratio
+
         if disable_mape:
-            # Log MAE/RMSE/CORR only (align with original CSA repo). Values already in TECU.
+            # Log MAE/RMSE/CORR (nanmean) with valid ratio; values already in TECU.
+            corr_list = []
             for t in range(y_true.shape[1]):
                 mae, _ = MAE_torch(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
                 rmse = RMSE_torch(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
-                corr = CORR_torch(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
-                logger.info("Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, CORR:{:.4f}%".format(
-                    t + 1, mae, rmse, corr))
+                corr_val, ratio = _corr_with_ratio(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
+                corr_list.append(corr_val)
+                logger.info("Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, CORR:{:.4f} (valid={:.1f}%)".format(
+                    t + 1, mae, rmse, 0.0 if corr_val!=corr_val else corr_val, ratio*100))
             mae, _ = MAE_torch(y_pred, y_true, args.mae_thresh)
             rmse = RMSE_torch(y_pred, y_true, args.mae_thresh)
-            corr = CORR_torch(y_pred, y_true, args.mae_thresh)
-            logger.info("Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, CORR:{:.4f}".format(mae, rmse, corr))
+            corr_vals = [c for c in corr_list if not (c!=c)]
+            corr_avg = sum(corr_vals)/len(corr_vals) if len(corr_vals)>0 else float('nan')
+            logger.info("Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, CORR:{:.4f}".format(
+                        mae, rmse, 0.0 if corr_avg!=corr_avg else corr_avg))
         else:
+            corr_list = []
             for t in range(y_true.shape[1]):
-                mae, rmse, mape, _, corr = All_Metrics(y_pred[:, t, ...], y_true[:, t, ...],
-                                                       args.mae_thresh, args.mape_thresh)
-                logger.info("Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}, CORR:{:.4f}%".format(
-                    t + 1, mae, rmse, mape*100, corr))
-            mae, rmse, mape, _, corr = All_Metrics(y_pred, y_true, args.mae_thresh, args.mape_thresh)
+                mae, rmse, mape, _, _ = All_Metrics(y_pred[:, t, ...], y_true[:, t, ...],
+                                                    args.mae_thresh, args.mape_thresh)
+                corr_val, ratio = _corr_with_ratio(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
+                corr_list.append(corr_val)
+                logger.info("Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}, CORR:{:.4f} (valid={:.1f}%)".format(
+                    t + 1, mae, rmse, mape*100, 0.0 if corr_val!=corr_val else corr_val, ratio*100))
+            mae, rmse, mape, _, _ = All_Metrics(y_pred, y_true, args.mae_thresh, args.mape_thresh)
+            corr_vals = [c for c in corr_list if not (c!=c)]
+            corr_avg = sum(corr_vals)/len(corr_vals) if len(corr_vals)>0 else float('nan')
             logger.info("Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}%, CORR:{:.4f}".format(
-                        mae, rmse, mape*100, corr))
+                        mae, rmse, mape*100, 0.0 if corr_avg!=corr_avg else corr_avg))
 
         # optionally save arrays for reproduction (float16 to reduce size)
         if save_arrays and log_filename:

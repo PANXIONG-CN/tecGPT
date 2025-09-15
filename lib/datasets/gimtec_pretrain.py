@@ -203,7 +203,7 @@ def build_gimtec_pretrain_dataloaders(args, normalizer=None, single=False, strid
     val_years = [2013, 2017]
     test_years = [2015, 2019, 2020, 2021, 2022]
 
-    interval_min = getattr(args, 'interval', 5)
+    interval_min = getattr(args, 'interval', 120)
     week_start = getattr(args, 'week_start', 4)
     # ensure attributes exist on args for model usage
     setattr(args, 'interval', interval_min)

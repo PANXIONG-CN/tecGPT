@@ -179,6 +179,11 @@ def get_dataloader(args, normalizer = 'std', tod=False, dow=False, weather=False
             # 强制 stride=1，对齐你当前策略；边界前缀默认 True
             return build_gimtec_pretrain_dataloaders(args, normalizer=normalizer, single=single,
                                                      stride=1, prefix_boundary=True)
+        if model_key == 'tec_mollm':
+            from lib.datasets.gimtec_pretrain import build_gimtec_pretrain_dataloaders
+            # 新增 TEC_MoLLM：年段切分 + 边界补帧 + 流式 stride=1
+            return build_gimtec_pretrain_dataloaders(args, normalizer=normalizer, single=single,
+                                                     stride=1, prefix_boundary=True)
     # GPT-ST 预训练：GIMtec/TEC 按年份划分的专用管线
     if getattr(args, 'mode', '') == 'pretrain' and ds_base in ['gimtec', 'tec']:
         from lib.datasets.gimtec_pretrain import build_gimtec_pretrain_dataloaders

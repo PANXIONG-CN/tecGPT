@@ -46,7 +46,7 @@ def load(args) -> np.ndarray:
     data = data.reshape(T, H * W)  # [T, N]
     # 为下游提供一些默认元信息（若未在 conf 中显式设置）
     if not hasattr(args, 'interval'):
-        args.interval = 5  # minutes per step（与 vendor 保持一致）
+        args.interval = 120  # minutes per step（GIMtec 每帧≈2小时）
     if not hasattr(args, 'week_day'):
         args.week_day = 7
     if not hasattr(args, 'week_start'):
@@ -54,4 +54,3 @@ def load(args) -> np.ndarray:
     if not hasattr(args, 'holiday_list'):
         args.holiday_list = []
     return data
-
