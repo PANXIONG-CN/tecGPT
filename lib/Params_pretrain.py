@@ -1,7 +1,6 @@
 import argparse
-# import numpy as np
 import configparser
-# import pandas as pd
+import os
 
 def parse_args(device):
 
@@ -17,9 +16,14 @@ def parse_args(device):
     args_get, _ = args.parse_known_args()
 
     # get configuration
-    config_file = '../conf/GPTST_pretrain/{}.conf'.format(args_get.dataset)
+    # 兼容任意工作目录：基于当前文件定位 conf 目录
+    _here = os.path.dirname(os.path.abspath(__file__))
+    config_file = os.path.join(_here, '..', 'conf', 'GPTST_pretrain', f'{args_get.dataset}.conf')
+    config_file = os.path.normpath(config_file)
     config = configparser.ConfigParser()
-    config.read(config_file)
+    read_ok = config.read(config_file)
+    if not read_ok or 'data' not in config:
+        raise FileNotFoundError(f'配置文件不存在或损坏: {config_file}')
 
     # data
     args.add_argument('-val_ratio', default=config['data']['val_ratio'], type=float)

@@ -6,6 +6,11 @@ print(file_dir)
 sys.path.append(file_dir)
 
 import torch
+try:
+    # 允许 TF32 以提升矩阵乘吞吐（A100/H100/H800 有效）
+    torch.set_float32_matmul_precision('high')
+except Exception:
+    pass
 import torch.nn as nn
 import configparser
 from model.Pretrain_model.GPTST import GPTST_Model as Network_Pretrain
@@ -168,15 +173,36 @@ loss_kl = nn.KLDivLoss(reduction='sum').to(args.device)
 # optimizer
 opt_name = getattr(args, 'optimizer', 'adam').lower()
 weight_decay = getattr(args, 'weight_decay', 0.0)
+import inspect
+_supports_fused = False
+try:
+    _supports_fused = 'fused' in set(inspect.signature(torch.optim.Adam).parameters.keys())
+except Exception:
+    pass
+
 if opt_name == 'adamw':
-    optimizer = torch.optim.AdamW(params=model.parameters(), lr=args.lr_init, eps=1.0e-8,
-                                  weight_decay=weight_decay, amsgrad=False)
+    try:
+        if _supports_fused and torch.cuda.is_available():
+            optimizer = torch.optim.AdamW(params=model.parameters(), lr=args.lr_init, eps=1.0e-8,
+                                          weight_decay=weight_decay, amsgrad=False, fused=True)
+        else:
+            raise RuntimeError('no fused')
+    except Exception:
+        optimizer = torch.optim.AdamW(params=model.parameters(), lr=args.lr_init, eps=1.0e-8,
+                                      weight_decay=weight_decay, amsgrad=False)
 elif opt_name == 'sgd':
     optimizer = torch.optim.SGD(params=model.parameters(), lr=args.lr_init, momentum=0.9,
                                 weight_decay=weight_decay, nesterov=True)
 else:
-    optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr_init, eps=1.0e-8,
-                                 weight_decay=weight_decay, amsgrad=False)
+    try:
+        if _supports_fused and torch.cuda.is_available():
+            optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr_init, eps=1.0e-8,
+                                         weight_decay=weight_decay, amsgrad=False, fused=True)
+        else:
+            raise RuntimeError('no fused')
+    except Exception:
+        optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr_init, eps=1.0e-8,
+                                     weight_decay=weight_decay, amsgrad=False)
 #learning rate decay
 lr_scheduler = None
 if getattr(args, 'scheduler', 'none') == 'plateau':

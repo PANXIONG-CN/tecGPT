@@ -111,32 +111,42 @@ def compute_yearwise_metrics(model, trainer):
     def _eval_loader(loader):
         import torch
         from lib.metrics import MSE_torch, MAE_torch, RMSE_torch
+        # 确保模型在正确设备并处于 eval 状态
+        net = model if model is not None else trainer.model
+        try:
+            net = net.to(args.device)
+        except Exception:
+            pass
+        was_train = net.training
+        net.eval()
         y_true_norm_all = []
         y_pred_norm_all = []
         with torch.no_grad():
             for x, y in loader:
-                x = x.to(args.device).float()
-                y = y.to(args.device).float()
-                # Only evaluate base channel (TECU); shape [B,T,N,1]
+                x = x.to(args.device, non_blocking=True).float()
+                y = y.to(args.device, non_blocking=True).float()
+                # 仅评估基础通道（TECU）；[B,T,N,1]
                 y = y[..., :1]
-                out = model(x, label=None)[0]
-                # ensure predictor output has the last dim=1 as base channel
+                out = net(x, label=None)[0]
                 if out.dim() == 3:
                     out = out.unsqueeze(-1)
                 y_true_norm_all.append(y)
                 y_pred_norm_all.append(out)
+        # 还原训练态
+        if was_train:
+            net.train()
         y_true_norm = torch.cat(y_true_norm_all, dim=0)
         y_pred_norm = torch.cat(y_pred_norm_all, dim=0)
-        mse_norm = MSE_torch(y_pred_norm, y_true_norm, None).item()
-        rmse_norm = (mse_norm ** 0.5)
+        mse_norm = float(MSE_torch(y_pred_norm, y_true_norm, None).item())
+        rmse_norm = float(mse_norm ** 0.5)
         # to TECU
         y_true = y_true_norm * FIX_MAX
         y_pred = y_pred_norm * FIX_MAX
-        rmse = RMSE_torch(y_pred, y_true, None).item()
+        rmse = float(RMSE_torch(y_pred, y_true, None).item())
         mae, _ = MAE_torch(y_pred, y_true, None)
-        mae = mae.item()
-        count = y_true.shape[0] * y_true.shape[1]
-        return mse_norm, rmse_norm, rmse, mae, int(count)
+        mae = float(mae.item())
+        count = int(y_true.shape[0] * y_true.shape[1])
+        return mse_norm, rmse_norm, rmse, mae, count
 
     overall = {
         'mse_norm': 0.0,
@@ -159,12 +169,12 @@ def compute_yearwise_metrics(model, trainer):
         loader, _ = build_year_loader(args, int(year), time_step, predict_step, prefix_from=int(prefixes[-1]))
         mse_n, rmse_n, rmse_tecu, mae_tecu, frames = _eval_loader(loader)
         overall['per_year'][year] = {
-            'mse_norm': mse_n,
-            'rmse_norm': rmse_n,
-            'rmse_real_TECU': rmse_tecu,
-            'mae_real_TECU': mae_tecu,
-            'relative_error_percent': rmse_n * 100.0,
-            'windows': frames // predict_step,
+            'mse_norm': float(mse_n),
+            'rmse_norm': float(rmse_n),
+            'rmse_real_TECU': float(rmse_tecu),
+            'mae_real_TECU': float(mae_tecu),
+            'relative_error_percent': float(rmse_n * 100.0),
+            'windows': int(frames // predict_step),
         }
         total_mse_sum += mse_n * frames
         total_rmse_sum += rmse_n * frames
@@ -176,10 +186,10 @@ def compute_yearwise_metrics(model, trainer):
         mse_norm = total_mse_sum / total_frames
         rmse_norm = total_rmse_sum / total_frames
         mae_real = total_mae_sum / total_frames
-        overall['mse_norm'] = mse_norm
-        overall['rmse_norm'] = rmse_norm
-        overall['rmse_real_TECU'] = rmse_norm * FIX_MAX
-        overall['mae_real_TECU'] = mae_real
-        overall['relative_error_percent'] = rmse_norm * 100.0
-        overall['count_frames'] = total_frames
+        overall['mse_norm'] = float(mse_norm)
+        overall['rmse_norm'] = float(rmse_norm)
+        overall['rmse_real_TECU'] = float(rmse_norm * FIX_MAX)
+        overall['mae_real_TECU'] = float(mae_real)
+        overall['relative_error_percent'] = float(rmse_norm * 100.0)
+        overall['count_frames'] = int(total_frames)
     return overall

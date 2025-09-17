@@ -25,6 +25,17 @@ def parse_args(DATASET, parser):
     parser.add_argument('--llm_layers', type=int, default=int(cfg.get('model', 'llm_layers', fallback='3')))
     parser.add_argument('--node_chunk', type=int, default=int(cfg.get('model', 'node_chunk', fallback='512')))
     parser.add_argument('--graph_tag', type=str, default=cfg.get('model', 'graph_tag', fallback='grid8'))
+    # light spatio-temporal embeddings
+    parser.add_argument('--use_node_tod_emb', type=eval, default=cfg.get('model', 'use_node_tod_emb', fallback='True'))
+    parser.add_argument('--d_e', type=int, default=int(cfg.get('model', 'd_e', fallback='16')))
+    parser.add_argument('--tod_bins', type=int, default=int(cfg.get('model', 'tod_bins', fallback='12')))
+    # LoRA (optional)
+    parser.add_argument('--use_lora', type=eval, default=cfg.get('model', 'use_lora', fallback='False'))
+    parser.add_argument('--lora_r', type=int, default=int(cfg.get('model', 'lora_r', fallback='32')))
+    parser.add_argument('--lora_alpha', type=int, default=int(cfg.get('model', 'lora_alpha', fallback='64')))
+    parser.add_argument('--lora_targets', type=str, default=cfg.get('model', 'lora_targets', fallback='c_attn'))
+    # dropout after LLM
+    parser.add_argument('--dropout_after_llm', type=float, default=float(cfg.get('model', 'dropout_after_llm', fallback='0.1')))
     # fusion & HF
     parser.add_argument('--use_ln', type=eval, default=cfg.get('model', 'use_ln', fallback='False'))
     parser.add_argument('--hf_model_name', type=str, default=cfg.get('model', 'hf_model_name', fallback='gpt2-large'))

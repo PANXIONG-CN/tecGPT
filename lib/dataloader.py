@@ -110,8 +110,9 @@ def data_loader(args, X, Y, batch_size, shuffle=True, drop_last=True):
     data = torch.utils.data.TensorDataset(X, Y)
     import os
     num_workers = min(8, max(0, (os.cpu_count() or 8) - 2))
-    dataloader = torch.utils.data.DataLoader(
-        data,
+    # 适度提高预取，减少输入管道抖动
+    pf = 4 if num_workers > 0 else None
+    dl_kwargs = dict(
         batch_size=batch_size,
         shuffle=shuffle,
         drop_last=drop_last,
@@ -119,6 +120,9 @@ def data_loader(args, X, Y, batch_size, shuffle=True, drop_last=True):
         num_workers=num_workers,
         persistent_workers=True if num_workers > 0 else False,
     )
+    if pf is not None:
+        dl_kwargs['prefetch_factor'] = pf
+    dataloader = torch.utils.data.DataLoader(data, **dl_kwargs)
     return dataloader
 
 

@@ -1,12 +1,17 @@
 import argparse
 import configparser
 import importlib
+import os
 
 def get_predictor_params(args):
     # get the based paras of predictors
-    config_file = '../conf/GPTST_pretrain/params_predictors.conf'
+    _here = os.path.dirname(os.path.abspath(__file__))
+    config_file = os.path.join(_here, '..', 'conf', 'GPTST_pretrain', 'params_predictors.conf')
+    config_file = os.path.normpath(config_file)
     config = configparser.ConfigParser()
-    config.read(config_file)
+    read_ok = config.read(config_file)
+    if not read_ok or 'train' not in config:
+        raise FileNotFoundError(f'配置文件不存在或损坏: {config_file}')
 
     parser_pred = argparse.ArgumentParser(prefix_chars='--', description='predictor_based_arguments')
     # train

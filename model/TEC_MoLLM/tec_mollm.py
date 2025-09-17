@@ -50,10 +50,14 @@ class TEC_MoLLM(nn.Module):
 
         temporal_channels = _as_tuple(getattr(args_predictor, 'temporal_channels', (64, 128)), (64, 128))
         temporal_strides = _as_tuple(getattr(args_predictor, 'temporal_strides', (2, 2)), (2, 2))
+        use_node_tod_emb = bool(getattr(args_predictor, 'use_node_tod_emb', True))
+        d_e = int(getattr(args_predictor, 'd_e', 16))
+        tod_bins = int(getattr(args_predictor, 'tod_bins', 12))
+        d_emb_total = (2 * d_e) if use_node_tod_emb else 0
 
         self.model = _VendorTEC(
             num_nodes=args_predictor.num_nodes,
-            d_emb=0,
+            d_emb=d_emb_total,
             spatial_in_base=self.dim_in,
             spatial_out=int(getattr(args_predictor, 'spatial_out', 16)),
             heads=int(getattr(args_predictor, 'heads', 2)),
@@ -68,6 +72,14 @@ class TEC_MoLLM(nn.Module):
             use_ln=bool(getattr(args_predictor, 'use_ln', False)),
             hf_model_name=str(getattr(args_predictor, 'hf_model_name', 'gpt2-large')),
             hf_cache_dir=str(getattr(args_predictor, 'hf_cache_dir', '/root/autodl-tmp/cache')),
+            use_node_tod_emb=use_node_tod_emb,
+            d_e=d_e,
+            tod_bins=tod_bins,
+            use_lora=bool(getattr(args_predictor, 'use_lora', False)),
+            lora_r=int(getattr(args_predictor, 'lora_r', 32)),
+            lora_alpha=int(getattr(args_predictor, 'lora_alpha', 64)),
+            lora_targets=str(getattr(args_predictor, 'lora_targets', 'c_attn')),
+            dropout_after_llm=float(getattr(args_predictor, 'dropout_after_llm', 0.1)),
         )
 
         self.to(self.device)

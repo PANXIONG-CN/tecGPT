@@ -6,6 +6,24 @@ import numpy as np
 from lib.logger import get_logger
 from lib.metrics import All_Metrics, MAE_torch, RMSE_torch, CORR_torch
 
+# --- AMP/BF16 helpers -------------------------------------------------------
+def _has_bf16_cuda() -> bool:
+    """Detect bf16 support on the current CUDA device.
+    Prefer torch APIs; fall back to compute capability heuristic (>= 8.0).
+    """
+    if not torch.cuda.is_available():
+        return False
+    try:
+        # PyTorch 2.x exposes this helper
+        return bool(getattr(torch.cuda, 'is_bf16_supported', lambda: False)())
+    except Exception:
+        pass
+    try:
+        major, minor = torch.cuda.get_device_capability(0)
+        return major >= 8
+    except Exception:
+        return False
+
 class Trainer(object):
     def __init__(self, model, loss, loss_kl, optimizer, train_loader, val_loader, test_loader,
                  scaler, args, lr_scheduler=None):
@@ -106,6 +124,20 @@ class Trainer(object):
         # val_pred = []
         # val_true = []
 
+        # AMP dtype selection: bf16 preferred on supported GPUs (e.g., H800)
+        use_amp_flag = bool(getattr(self.args, 'amp', False)) and torch.cuda.is_available()
+        has_bf16 = _has_bf16_cuda()
+        amp_dtype = torch.bfloat16 if (use_amp_flag and has_bf16) else (torch.float16 if use_amp_flag else None)
+        # Compat autocast context (torch.amp preferred; fallback to torch.cuda.amp)
+        try:
+            from torch.amp import autocast as _autocast
+            def _amp_ctx(enabled, dtype):
+                return _autocast('cuda', enabled=enabled, dtype=dtype)
+        except Exception:
+            from torch.cuda.amp import autocast as _autocast
+            def _amp_ctx(enabled, dtype):
+                return _autocast(enabled=enabled, dtype=dtype)
+
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(val_dataloader):
                 data = data.to(self.args.device, non_blocking=True)
@@ -115,14 +147,16 @@ class Trainer(object):
                     label = data[..., :self.args.input_base_dim + self.args.input_extra_dim]
                 else:
                     label = target[..., :self.args.input_base_dim + self.args.input_extra_dim]
-                output, _, mask, _, _ = self.model(data, label=None)
+                with _amp_ctx(use_amp_flag, amp_dtype):
+                    output, _, mask, _, _ = self.model(data, label=None)
                 # if self.args.real_value:
                 #     label = self.scaler.inverse_transform(label[..., :self.args.output_dim])
-                if self.args.mode == 'pretrain':
-                    loss, loss_base = self.loss(output, label[..., :self.args.output_dim], mask)
-                else:
-                    res = self.loss(output, label[..., :self.args.output_dim])
-                    loss = res[0] if isinstance(res, tuple) else res
+                with _amp_ctx(use_amp_flag, amp_dtype):
+                    if self.args.mode == 'pretrain':
+                        loss, loss_base = self.loss(output, label[..., :self.args.output_dim], mask)
+                    else:
+                        res = self.loss(output, label[..., :self.args.output_dim])
+                        loss = res[0] if isinstance(res, tuple) else res
                 # accumulate only finite losses
                 if torch.isfinite(loss).item():
                     total_val_loss += loss.item()
@@ -139,9 +173,30 @@ class Trainer(object):
         count_steps = 0
         total_flow_loss = 0
         total_s_loss = 0
-        use_amp = getattr(self.args, 'amp', False)
+        # AMP dtype selection: bf16 preferred on supported GPUs (e.g., H800)
+        use_amp_flag = bool(getattr(self.args, 'amp', False)) and torch.cuda.is_available()
+        has_bf16 = _has_bf16_cuda()
+        amp_dtype = torch.bfloat16 if (use_amp_flag and has_bf16) else (torch.float16 if use_amp_flag else None)
         accum = max(1, int(getattr(self.args, 'accumulate_steps', 1)))
-        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        # AMP helpers: use new torch.amp API if available
+        try:
+            from torch.amp import GradScaler as _GradScaler
+            def _make_scaler(enabled):
+                return _GradScaler('cuda', enabled=enabled)
+        except Exception:
+            from torch.cuda.amp import GradScaler as _GradScaler
+            def _make_scaler(enabled):
+                return _GradScaler(enabled=enabled)
+        try:
+            from torch.amp import autocast as _autocast
+            def _amp_ctx(enabled, dtype):
+                return _autocast('cuda', enabled=enabled, dtype=dtype)
+        except Exception:
+            from torch.cuda.amp import autocast as _autocast
+            def _amp_ctx(enabled, dtype):
+                return _autocast(enabled=enabled, dtype=dtype)
+        # Enable GradScaler only for FP16 (bf16 path runs without scaling)
+        scaler = _make_scaler(enabled=(use_amp_flag and not has_bf16))
         grad_clip = float(getattr(self.args, 'grad_clip', 0.0))
         for batch_idx, (data, target) in enumerate(self.train_loader):
             self.batch_seen += 1
@@ -156,7 +211,7 @@ class Trainer(object):
                 self.optimizer.zero_grad(set_to_none=True)
 
             if self.args.mode == 'pretrain':
-                with torch.cuda.amp.autocast(enabled=use_amp):
+                with _amp_ctx(use_amp_flag, amp_dtype):
                     out, out_time, mask, probability, eb = self.model(data, label, self.batch_seen, epoch)
                     loss_flow, loss_base = self.loss(out, label[..., :self.args.output_dim], mask)
                     if epoch > self.args.change_epoch:
@@ -165,25 +220,30 @@ class Trainer(object):
                     else:
                         loss = loss_flow
             else:
-                with torch.cuda.amp.autocast(enabled=use_amp):
+                with _amp_ctx(use_amp_flag, amp_dtype):
                     out, out_time, mask, probability, eb2 = self.model(data, label, self.batch_seen)
                     res = self.loss(out, label[..., :self.args.output_dim])
                     # loss functions may return (mean_loss, elementwise) tuples (e.g., mask_mae)
                     loss = res[0] if isinstance(res, tuple) else res
 
             loss_to_back = loss / accum
-            if use_amp:
+            if use_amp_flag:
                 scaler.scale(loss_to_back).backward()
             else:
                 loss_to_back.backward()
 
             # add max grad clipping
             if grad_clip and grad_clip > 0:
+                # unscale before clipping in scaled fp16 path
+                if use_amp_flag and not has_bf16:
+                    scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
             elif self.args.grad_norm:
+                if use_amp_flag and not has_bf16:
+                    scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
             if (batch_idx + 1) % accum == 0 or (batch_idx + 1) == self.train_per_epoch:
-                if use_amp:
+                if use_amp_flag:
                     scaler.step(self.optimizer)
                     scaler.update()
                 else:
@@ -483,6 +543,7 @@ class Trainer(object):
                 return float('nan'), ratio
             return float(torch.nanmean(valid_vals).item()), ratio
 
+        tag = str(save_tag) if save_tag is not None else 'eval'
         if disable_mape:
             # Log MAE/RMSE/CORR (nanmean) with valid ratio; values already in TECU.
             corr_list = []
@@ -491,14 +552,14 @@ class Trainer(object):
                 rmse = RMSE_torch(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
                 corr_val, ratio = _corr_with_ratio(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
                 corr_list.append(corr_val)
-                logger.info("Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, CORR:{:.4f} (valid={:.1f}%)".format(
-                    t + 1, mae, rmse, 0.0 if corr_val!=corr_val else corr_val, ratio*100))
+                logger.info("[{}] Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, CORR:{:.4f} (valid={:.1f}%)".format(
+                    tag, t + 1, mae, rmse, 0.0 if corr_val!=corr_val else corr_val, ratio*100))
             mae, _ = MAE_torch(y_pred, y_true, args.mae_thresh)
             rmse = RMSE_torch(y_pred, y_true, args.mae_thresh)
             corr_vals = [c for c in corr_list if not (c!=c)]
             corr_avg = sum(corr_vals)/len(corr_vals) if len(corr_vals)>0 else float('nan')
-            logger.info("Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, CORR:{:.4f}".format(
-                        mae, rmse, 0.0 if corr_avg!=corr_avg else corr_avg))
+            logger.info("[{}] Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, CORR:{:.4f}".format(
+                        tag, mae, rmse, 0.0 if corr_avg!=corr_avg else corr_avg))
         else:
             corr_list = []
             for t in range(y_true.shape[1]):
@@ -506,13 +567,13 @@ class Trainer(object):
                                                     args.mae_thresh, args.mape_thresh)
                 corr_val, ratio = _corr_with_ratio(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
                 corr_list.append(corr_val)
-                logger.info("Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}, CORR:{:.4f} (valid={:.1f}%)".format(
-                    t + 1, mae, rmse, mape*100, 0.0 if corr_val!=corr_val else corr_val, ratio*100))
+                logger.info("[{}] Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}, CORR:{:.4f} (valid={:.1f}%)".format(
+                    tag, t + 1, mae, rmse, mape*100, 0.0 if corr_val!=corr_val else corr_val, ratio*100))
             mae, rmse, mape, _, _ = All_Metrics(y_pred, y_true, args.mae_thresh, args.mape_thresh)
             corr_vals = [c for c in corr_list if not (c!=c)]
             corr_avg = sum(corr_vals)/len(corr_vals) if len(corr_vals)>0 else float('nan')
-            logger.info("Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}%, CORR:{:.4f}".format(
-                        mae, rmse, mape*100, 0.0 if corr_avg!=corr_avg else corr_avg))
+            logger.info("[{}] Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}%, CORR:{:.4f}".format(
+                        tag, mae, rmse, mape*100, 0.0 if corr_avg!=corr_avg else corr_avg))
 
         # optionally save arrays for reproduction (float16 to reduce size)
         if save_arrays and log_filename:

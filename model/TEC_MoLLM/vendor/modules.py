@@ -135,7 +135,9 @@ class TinyTransformerEncoder(nn.Module):
 
 
 class LLMBackbone(nn.Module):
-    def __init__(self, layers=3, d_llm=768, lora_r=32, lora_alpha=64, hf_model_name: str = None, cache_dir: str = None, local_only: bool = True, freeze: bool = True):
+    def __init__(self, layers=3, d_llm=768,
+                 lora_r=32, lora_alpha=64, hf_model_name: str = None, cache_dir: str = None, local_only: bool = True, freeze: bool = True,
+                 use_lora: bool = False, lora_targets: str = 'c_attn', lora_dropout: float = 0.1):
         super().__init__()
         self.d_llm = d_llm
         self.use_hf = _HAS_TRANSFORMERS
@@ -159,14 +161,63 @@ class LLMBackbone(nn.Module):
                 except Exception:
                     # some architectures may not expose .h; ignore layer slicing
                     pass
-                # Reduce memory: disable KV cache, enable gradient checkpointing when training
+                # Reduce memory: disable KV cache; gradient checkpointing opt-in via env
                 try:
                     base.config.use_cache = False
-                    if not freeze:
-                        base.gradient_checkpointing_enable()
                 except Exception:
                     pass
-                if freeze:
+                # Enable gradient checkpointing only if TECGPT_ENABLE_GC is truthy
+                try:
+                    from distutils.util import strtobool
+                except Exception:
+                    def strtobool(x):
+                        return x.lower() in ('1','true','yes','y','on')
+                try:
+                    enable_gc = strtobool(os.environ.get('TECGPT_ENABLE_GC', '0'))
+                except Exception:
+                    enable_gc = False
+                try:
+                    if enable_gc and hasattr(base, 'gradient_checkpointing_enable'):
+                        # Prefer non-reentrant checkpointing for更少的调度开销（新版本Transformers支持）
+                        try:
+                            base.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+                        except Exception:
+                            base.gradient_checkpointing_enable()
+                        try:
+                            setattr(base.config, 'gradient_checkpointing', True)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                # Force safe attention implementation to avoid CUDA SDPA flash issues
+                # Prefer eager (math) attention in Transformers when available
+                try:
+                    # Newer Transformers
+                    setattr(base.config, 'attn_implementation', 'eager')
+                except Exception:
+                    pass
+                for attr in ['_attn_implementation', '_attn_implementation_internal']:
+                    try:
+                        setattr(base.config, attr, 'eager')
+                    except Exception:
+                        pass
+                # Optional LoRA injection
+                if use_lora:
+                    try:
+                        from peft import get_peft_model, LoraConfig
+                        targets = [t.strip() for t in str(lora_targets).split(',') if t.strip()]
+                        lcfg = LoraConfig(r=int(lora_r), lora_alpha=int(lora_alpha), target_modules=targets,
+                                          lora_dropout=float(lora_dropout), bias='none')
+                        base = get_peft_model(base, lcfg)
+                        # mark trainable (LoRA params have requires_grad=True)
+                        for p in base.parameters():
+                            # keep base frozen except injected lora params (already set by peft)
+                            pass
+                    except Exception as e:
+                        # if peft unavailable, silently fall back to non-lora path
+                        # print warning only once
+                        print(f"[LLMBackbone] peft not available or init failed, disable LoRA: {e}")
+                elif freeze:
                     for p in base.parameters():
                         p.requires_grad_(False)
                 self.model = base
@@ -178,7 +229,38 @@ class LLMBackbone(nn.Module):
 
     def forward(self, inputs_embeds: torch.Tensor, attention_mask=None):
         if self.use_hf:
-            out = self.model(inputs_embeds=inputs_embeds, attention_mask=attention_mask)
+            # Select SDPA backend via env TECGPT_SDPA: 'math' (default), 'mem', or 'flash'
+            mode = os.environ.get('TECGPT_SDPA', 'math').strip().lower()
+            # Prefer new torch.nn.attention.sdpa_kernel; fallback to torch.backends.cuda.sdp_kernel
+            ctx = None
+            try:
+                import torch.nn as _nn
+                if hasattr(_nn, 'attention') and hasattr(_nn.attention, 'sdpa_kernel'):
+                    if mode == 'flash':
+                        ctx = _nn.attention.sdpa_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False)
+                    elif mode in ('mem','memory','efficient'):
+                        ctx = _nn.attention.sdpa_kernel(enable_flash=False, enable_math=False, enable_mem_efficient=True)
+                    else:
+                        ctx = _nn.attention.sdpa_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False)
+            except Exception:
+                ctx = None
+            if ctx is None:
+                try:
+                    if mode == 'flash':
+                        ctx = torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False)
+                    elif mode in ('mem','memory','efficient'):
+                        ctx = torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=False, enable_mem_efficient=True)
+                    else:
+                        ctx = torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False)
+                except Exception:
+                    class _Noop:
+                        def __enter__(self, *a, **kw):
+                            return self
+                        def __exit__(self, *a, **kw):
+                            return False
+                    ctx = _Noop()
+            with ctx:
+                out = self.model(inputs_embeds=inputs_embeds, attention_mask=attention_mask)
             return out.last_hidden_state
         # Fallback path
         z = self.in_proj(inputs_embeds)
@@ -196,4 +278,3 @@ class PredictionHead(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.mlp(x.view(x.size(0), -1))
-
