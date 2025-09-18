@@ -92,6 +92,8 @@ def parse_args(device):
     args.add_argument('-xavier', default=config['train']['xavier'], type=eval)
     args.add_argument('-load_pretrain_path', default=config['train']['load_pretrain_path'], type=str)
     args.add_argument('-save_pretrain_path', default=config['train']['save_pretrain_path'], type=str)
+    # resume/init from checkpoint for supervised modes
+    args.add_argument('-init_from', default='', type=str, help='path to model .pth (state_dict or raw) to initialize before training')
     # pretrain-specific dataloader options for GIMtec
     args.add_argument('-stride_horizon', default=False, type=eval, help='use stride=horizon when windowing')
     args.add_argument('-prefix_boundary', default=True, type=eval, help='prepend lag frames at year boundaries')

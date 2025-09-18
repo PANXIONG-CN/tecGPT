@@ -111,6 +111,18 @@ else:
     model = Network_Predict(args, args_predictor)
     model = model.to(args.device)
 
+# Optional: initialize from a saved checkpoint for supervised training
+init_from = getattr(args, 'init_from', '') if hasattr(args, 'init_from') else ''
+if init_from:
+    try:
+        state = torch.load(init_from, map_location=args.device)
+        if isinstance(state, dict) and 'state_dict' in state:
+            state = state['state_dict']
+        model.load_state_dict(state, strict=False)
+        print(f"Initialized model from: {init_from}")
+    except Exception as e:
+        print(f"Warning: failed to init from {init_from}: {e}")
+
 if args.xavier:
     for p in model.parameters():
         if p.requires_grad==True:
