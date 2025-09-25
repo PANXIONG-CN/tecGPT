@@ -36,7 +36,9 @@ def load(args) -> np.ndarray:
     - 拼接 2009-2022 年，按时间顺序串联。
     - 下游通用管线会自动拼接 day/week 特征，并进行窗口化与归一化。
     """
-    base_dir = os.path.join('..', 'data', 'GIMtec')
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _repo = os.path.dirname(os.path.dirname(_here))
+    base_dir = os.path.join(_repo, 'data', 'GIMtec')
     years = list(range(2009, 2023))
     parts = [_load_year(base_dir, y) for y in years if os.path.exists(os.path.join(base_dir, f"TEC_{y}.npy"))]
     if not parts:

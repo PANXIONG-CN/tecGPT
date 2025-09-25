@@ -5,6 +5,13 @@ import copy
 import numpy as np
 from lib.logger import get_logger
 from lib.metrics import All_Metrics, MAE_torch, RMSE_torch, CORR_torch
+try:
+    # Optional imports for physics PINN (kept model-agnostic)
+    from lib.datasets.gimtec_adj import load_or_build_adj  # unified adjacency for GIMtec/TEC
+    from lib.physics.ppinn import PPinnLoss
+except Exception:
+    load_or_build_adj = None
+    PPinnLoss = None
 
 # --- AMP/BF16 helpers -------------------------------------------------------
 def _has_bf16_cuda() -> bool:
@@ -117,6 +124,50 @@ class Trainer(object):
         self.best_path = self.best_run_path
         self.loss_figure_path = os.path.join(self.args.log_dir, 'loss.png')
 
+        # ====== Physics PINN (optional; minimal intrusion) ======
+        self.use_pinn = bool(getattr(self.args, 'use_pinn', False)) and (PPinnLoss is not None)
+        self.ppinn = None
+        if self.use_pinn:
+            try:
+                # Build/load adjacency where applicable (e.g., GIMtec/TEC grid8); failure falls back to None
+                A = None
+                if load_or_build_adj is not None:
+                    A_np, _ = load_or_build_adj(getattr(self.args, 'dataset', 'GIMtec'),
+                                                getattr(self.args, 'num_nodes', 71*73),
+                                                graph_tag=getattr(self.args, 'graph_tag', 'grid8'),
+                                                adj_model=getattr(self.args, 'adj_model', None))
+                    A = torch.from_numpy(A_np.astype('float32')).to(self.args.device)
+            except Exception:
+                A = None
+            dtm = int(getattr(self.args, 'interval', 120))
+            self.ppinn = PPinnLoss(
+                scaler_data=self.scaler,
+                A=A,
+                dt_minutes=dtm,
+                tec_ref=float(getattr(self.args, 'tec_ref', 50.0)),
+                t_ref_sec=float(getattr(self.args, 't_ref_sec', 7200.0)),
+                rot_cap_tecu_per_min=float(getattr(self.args, 'rot_cap', 0.5)),
+                roti_cap_scale=float(getattr(self.args, 'roti_cap_scale', 0.7)),
+                kappa_nd=float(getattr(self.args, 'kappa_nd', 0.05)),
+                roti_w=3,
+                use_diffusion=bool(getattr(self.args, 'use_diffusion', True)),
+                use_drivers=bool(getattr(self.args, 'use_drivers', False)),
+            ).to(self.args.device)
+            # Ensure PPINN parameters (e.g., log_vars) are optimized
+            try:
+                if hasattr(self, 'optimizer') and self.optimizer is not None:
+                    self.optimizer.add_param_group({'params': self.ppinn.parameters(),
+                                                    'lr': float(getattr(self.args, 'lr_init', 1e-3))})
+                    self.logger.info('PPINN parameters added to optimizer.')
+            except Exception as e:
+                self.logger.warning(f'Failed to add PPINN params to optimizer: {e}')
+        # Prepare robust drivers path under repo root
+        try:
+            _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self._drivers_path = os.path.join(_repo_root, 'data', 'GIMtec', 'drivers', 'drivers_2009_2022_2h.npz')
+        except Exception:
+            self._drivers_path = "./data/GIMtec/drivers/drivers_2009_2022_2h.npz"
+
     def val_epoch(self, epoch, val_dataloader):
         self.model.eval()
         total_val_loss = 0
@@ -139,7 +190,13 @@ class Trainer(object):
                 return _autocast(enabled=enabled, dtype=dtype)
 
         with torch.no_grad():
-            for batch_idx, (data, target) in enumerate(val_dataloader):
+            for batch_idx, batch in enumerate(val_dataloader):
+                # support optional (data, target, start_idx) for driver slicing; default to 2-tuple
+                if isinstance(batch, (list, tuple)) and len(batch) == 3:
+                    data, target, start_idx = batch
+                else:
+                    data, target = batch
+                    start_idx = None
                 data = data.to(self.args.device, non_blocking=True)
                 target = target.to(self.args.device, non_blocking=True)
                 data = data[..., :self.args.input_base_dim + self.args.input_extra_dim]
@@ -148,15 +205,39 @@ class Trainer(object):
                 else:
                     label = target[..., :self.args.input_base_dim + self.args.input_extra_dim]
                 with _amp_ctx(use_amp_flag, amp_dtype):
-                    output, _, mask, _, _ = self.model(data, label=None)
+                    if self.args.mode == 'pretrain':
+                        output, _, mask, _, _ = self.model(data, label)
+                    else:
+                        output, _, mask, _, _ = self.model(data, label=None)
                 # if self.args.real_value:
                 #     label = self.scaler.inverse_transform(label[..., :self.args.output_dim])
                 with _amp_ctx(use_amp_flag, amp_dtype):
                     if self.args.mode == 'pretrain':
                         loss, loss_base = self.loss(output, label[..., :self.args.output_dim], mask)
                     else:
-                        res = self.loss(output, label[..., :self.args.output_dim])
+                        res = self.loss(output, target[..., :self.args.output_dim])
                         loss = res[0] if isinstance(res, tuple) else res
+                        # Physics PINN (optional) — zero-driver works without start_idx
+                        if self.ppinn is not None:
+                            try:
+                                y_pred01 = output[..., :1]
+                                drivers = None
+                                # external drivers can be enabled later with dataset returning start_idx
+                                if bool(getattr(self.args, 'use_drivers', False)) and (start_idx is not None):
+                                    from lib.physics.drivers import DriversStore
+                                    if not hasattr(self, '_drivers'):
+                                        self._drivers = DriversStore(self._drivers_path, device=self.args.device)
+                                    B, T, N = y_pred01.shape[0], y_pred01.shape[1], y_pred01.shape[2]
+                                    drivers = self._drivers.slice_bt(int(start_idx), T, N)
+                                    drivers['use_adv'] = bool(getattr(self.args, 'use_adv', False))
+                                lam = float(getattr(self.args, 'lambda_phys', 1.0))
+                                if lam != 0.0:
+                                    # Avoid double-counting data term: exclude data from PPINN aggregation
+                                    loss_phys, _ = self.ppinn(y_pred01, None, drivers=drivers)
+                                    if torch.isfinite(loss_phys).item():
+                                        loss = loss + lam * loss_phys
+                            except Exception:
+                                pass
                 # accumulate only finite losses
                 if torch.isfinite(loss).item():
                     total_val_loss += loss.item()
@@ -198,8 +279,14 @@ class Trainer(object):
         # Enable GradScaler only for FP16 (bf16 path runs without scaling)
         scaler = _make_scaler(enabled=(use_amp_flag and not has_bf16))
         grad_clip = float(getattr(self.args, 'grad_clip', 0.0))
-        for batch_idx, (data, target) in enumerate(self.train_loader):
+        for batch_idx, batch in enumerate(self.train_loader):
             self.batch_seen += 1
+            # support optional (data, target, start_idx)
+            if isinstance(batch, (list, tuple)) and len(batch) == 3:
+                data, target, start_idx = batch
+            else:
+                data, target = batch
+                start_idx = None
             data = data.to(self.args.device, non_blocking=True)
             target = target.to(self.args.device, non_blocking=True)
             data = data[..., :self.args.input_base_dim + self.args.input_extra_dim]
@@ -212,8 +299,8 @@ class Trainer(object):
 
             if self.args.mode == 'pretrain':
                 with _amp_ctx(use_amp_flag, amp_dtype):
-                    out, out_time, mask, probability, eb = self.model(data, label, self.batch_seen, epoch)
-                    loss_flow, loss_base = self.loss(out, label[..., :self.args.output_dim], mask)
+                    output, out_time, mask, probability, eb = self.model(data, label, self.batch_seen, epoch)
+                    loss_flow, loss_base = self.loss(output, label[..., :self.args.output_dim], mask)
                     if epoch > self.args.change_epoch:
                         loss_s = self.loss_kl(probability.log(), eb) * 0.1
                         loss = loss_flow + loss_s
@@ -221,10 +308,30 @@ class Trainer(object):
                         loss = loss_flow
             else:
                 with _amp_ctx(use_amp_flag, amp_dtype):
-                    out, out_time, mask, probability, eb2 = self.model(data, label, self.batch_seen)
-                    res = self.loss(out, label[..., :self.args.output_dim])
+                    output, out_time, mask, probability, eb2 = self.model(data, label, self.batch_seen)
+                    res = self.loss(output, target[..., :self.args.output_dim])
                     # loss functions may return (mean_loss, elementwise) tuples (e.g., mask_mae)
                     loss = res[0] if isinstance(res, tuple) else res
+                    # Physics PINN (optional)
+                    if self.ppinn is not None:
+                        try:
+                            y_pred01 = output[..., :1]
+                            drivers = None
+                            if bool(getattr(self.args, 'use_drivers', False)) and (start_idx is not None):
+                                from lib.physics.drivers import DriversStore
+                                if not hasattr(self, '_drivers'):
+                                    self._drivers = DriversStore(self._drivers_path, device=self.args.device)
+                                B, T, N = y_pred01.shape[0], y_pred01.shape[1], y_pred01.shape[2]
+                                drivers = self._drivers.slice_bt(int(start_idx), T, N)
+                                drivers['use_adv'] = bool(getattr(self.args, 'use_adv', False))
+                            lam = float(getattr(self.args, 'lambda_phys', 1.0))
+                            if lam != 0.0:
+                                # Avoid double-counting data term in training
+                                loss_phys, _ = self.ppinn(y_pred01, None, drivers=drivers)
+                                if torch.isfinite(loss_phys).item():
+                                    loss = loss + lam * loss_phys
+                        except Exception:
+                            pass
 
             loss_to_back = loss / accum
             if use_amp_flag:
@@ -498,7 +605,11 @@ class Trainer(object):
         y_pred = []
         y_true = []
         with torch.no_grad():
-            for batch_idx, (data, target) in enumerate(data_loader):
+            for batch_idx, batch in enumerate(data_loader):
+                if isinstance(batch, (list, tuple)) and len(batch) == 3:
+                    data, target, _ = batch
+                else:
+                    data, target = batch
                 data = data.to(args.device, non_blocking=True)
                 target = target.to(args.device, non_blocking=True)
                 data = data[..., :args.input_base_dim + args.input_extra_dim]

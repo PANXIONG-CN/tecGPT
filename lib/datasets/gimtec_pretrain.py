@@ -198,7 +198,9 @@ class _SegmentWindowDataset(Dataset):
 
 
 def build_gimtec_pretrain_dataloaders(args, normalizer=None, single=False, stride: int = 1, prefix_boundary: bool = True):
-    base_dir = os.path.join('..', 'data', 'GIMtec')
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _repo = os.path.dirname(os.path.dirname(_here))
+    base_dir = os.path.join(_repo, 'data', 'GIMtec')
     train_years = [2009, 2010, 2011, 2012, 2014, 2016, 2018]
     val_years = [2013, 2017]
     test_years = [2015, 2019, 2020, 2021, 2022]

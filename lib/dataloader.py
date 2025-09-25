@@ -166,7 +166,8 @@ class _WindowDataset(torch.utils.data.Dataset):
         yw = self.scaler_week.transform(y[..., self.input_base_dim+1:self.input_base_dim+2])
         x = np.concatenate([xb, xd, xw], axis=-1)
         y = np.concatenate([yb, yd, yw], axis=-1)
-        return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
+        # return global start index for driver slicing (optional third element)
+        return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32), s
 
 def get_dataloader(args, normalizer = 'std', tod=False, dow=False, weather=False, single=True):
     # CSA系列（含优化版）+ GIMtec: 使用 vendor 流水线，完全对齐 VendorCode/原仓

@@ -102,6 +102,17 @@ def parse_args(device):
     # naming tags for pretrain artifacts
     args.add_argument('-target_model', default='generic', type=str, help='downstream predictor tag for naming only')
     args.add_argument('-graph_tag', default='na', type=str, help='graph/adjacency tag for naming only')
+    # Physics-PINN options (minimal intrusion; defaults keep it off)
+    args.add_argument('-use_pinn', default=False, type=eval, help='enable physics-driven PINN loss')
+    args.add_argument('-lambda_phys', default=1.0, type=float, help='weight for physics loss')
+    args.add_argument('-use_diffusion', default=True, type=eval, help='enable diffusion term in PPINN')
+    args.add_argument('-use_drivers', default=False, type=eval, help='enable external drivers in PPINN')
+    args.add_argument('-use_adv', default=False, type=eval, help='enable Kp-driven advection proxy in PPINN drivers')
+    args.add_argument('-rot_cap', default=0.5, type=float, help='ROT cap in TECU/min (will be nondimensionalized)')
+    args.add_argument('-roti_cap_scale', default=0.7, type=float, help='ROTI cap as scale of ROT cap')
+    args.add_argument('-kappa_nd', default=0.05, type=float, help='nondimensional diffusion coefficient')
+    args.add_argument('-tec_ref', default=50.0, type=float, help='TECU reference for nondimensionalization')
+    args.add_argument('-t_ref_sec', default=7200.0, type=float, help='time reference in seconds for nondimensionalization')
     # test
     args.add_argument('-mae_thresh', default=config['test']['mae_thresh'], type=eval)
     args.add_argument('-mape_thresh', default=config['test']['mape_thresh'], type=float)

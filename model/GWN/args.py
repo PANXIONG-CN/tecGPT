@@ -6,9 +6,15 @@ from lib.predifineGraph import get_adjacency_matrix, load_pickle, weight_matrix
 
 def parse_args(DATASET, parser):
     # get configuration
-    config_file = '../conf/GWN/{}.conf'.format(DATASET)
+    # Robust path resolution: base on repo root
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _repo = os.path.dirname(os.path.dirname(_here))
+    config_file = os.path.join(_repo, 'conf', 'GWN', f'{DATASET}.conf')
+    config_file = os.path.normpath(config_file)
     config = configparser.ConfigParser()
-    config.read(config_file)
+    read_ok = config.read(config_file)
+    if not read_ok or 'data' not in config:
+        raise FileNotFoundError(f'GWN config not found or invalid: {config_file}')
 
     # data
     parser.add_argument('--num_nodes', type=int, default=config['data']['num_nodes'])

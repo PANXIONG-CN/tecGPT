@@ -1,7 +1,12 @@
 import torch
 import torch.nn as nn
 import importlib
-from Pretrain_model.GPTST import GPTST_Model
+try:
+    # support running as a module (python -m model.Run)
+    from model.Pretrain_model.GPTST import GPTST_Model
+except Exception:
+    # fallback for legacy direct execution paths
+    from Pretrain_model.GPTST import GPTST_Model
 
 class Fusion(nn.Module):
     def __init__(self, dim):
@@ -65,7 +70,10 @@ class Enhance_model(nn.Module):
             from ASTGCN.ASTGCN import ASTGCN
             self.predictor = ASTGCN(args_predictor, args.device, dim_in, dim_out)
         elif self.model == 'GWN':
-            from GWN.GWN import GWNET
+            try:
+                from model.GWN.GWN import GWNET
+            except Exception:
+                from GWN.GWN import GWNET
             self.predictor = GWNET(args_predictor, args.device, dim_in, dim_out)
         elif self.model == 'TGCN':
             from TGCN.TGCN import TGCN

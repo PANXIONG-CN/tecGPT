@@ -23,7 +23,9 @@ def _ensure_dir(path: str):
 
 
 def _adj_store_dir(dataset: str) -> str:
-    return os.path.join('..', 'data', 'adj', dataset)
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _repo = os.path.dirname(os.path.dirname(_here))
+    return os.path.join(_repo, 'data', 'adj', dataset)
 
 
 def latest_adj_path(dataset: str) -> str | None:
@@ -63,7 +65,9 @@ def load_or_build_adj(dataset: str, num_nodes: int, graph_tag: str = 'grid8', ad
         return np.load(path_latest).astype(np.float32), path_latest
 
     # 兼容旧路径 data/<DATASET>/<DATASET>.npy
-    legacy = os.path.join('..', 'data', dataset, f'{dataset}.npy')
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _repo = os.path.dirname(os.path.dirname(_here))
+    legacy = os.path.join(_repo, 'data', dataset, f'{dataset}.npy')
     if os.path.exists(legacy):
         A, _ = get_adjacency_matrix(legacy, num_nodes)
         return A, legacy
@@ -77,4 +81,3 @@ def load_or_build_adj(dataset: str, num_nodes: int, graph_tag: str = 'grid8', ad
     # 其他数据集：返回零矩阵占位（或抛错）
     A = np.zeros((num_nodes, num_nodes), dtype=np.float32)
     return A, ''
-
