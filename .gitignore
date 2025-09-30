@@ -2,6 +2,9 @@
 /data/
 /Output/
 /fix_docs/
+/wandb/
+/scripts/
+.secrets/
 
 
 # Python cache files
@@ -10,3 +13,4 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+
