@@ -204,11 +204,33 @@ class Trainer(object):
                     label = data[..., :self.args.input_base_dim + self.args.input_extra_dim]
                 else:
                     label = target[..., :self.args.input_base_dim + self.args.input_extra_dim]
+                # Optional drivers input for de_gwn
+                drivers_input = None
+                if (str(getattr(self.args, 'model', '')).lower() == 'gwn') and bool(getattr(self.args, 'use_drivers', False)):
+                    try:
+                        from lib.physics.drivers import DriversStore
+                        if not hasattr(self, '_drivers'):
+                            self._drivers = DriversStore(self._drivers_path, device=self.args.device)
+                        B = data.size(0); T = data.size(1); N = data.size(2)
+                        sidx = int(start_idx) if start_idx is not None else 0
+                        d = self._drivers.slice_bt(sidx, T, N)
+                        ae = d['AE']; dst = d['Dst']; kp = d['Kp']; f107 = d['F107']; cosz = d.get('cosSZA')
+                        if cosz is None:
+                            import torch as _torch
+                            cosz = _torch.zeros_like(ae)
+                        # shape [1,T,N] -> [B,T,N,1]; stack last dim
+                        drivers_input = torch.stack([ae, dst, kp, f107, cosz], dim=-1).expand(B, -1, -1, -1)
+                    except Exception:
+                        drivers_input = None
                 with _amp_ctx(use_amp_flag, amp_dtype):
                     if self.args.mode == 'pretrain':
                         output, _, mask, _, _ = self.model(data, label)
                     else:
-                        output, _, mask, _, _ = self.model(data, label=None)
+                        # pass optional drivers_input for de_gwn
+                        try:
+                            output, _, mask, _, _ = self.model(data, label=None, batch_seen=None, drivers_input=drivers_input)
+                        except TypeError:
+                            output, _, mask, _, _ = self.model(data, label=None)
                 # if self.args.real_value:
                 #     label = self.scaler.inverse_transform(label[..., :self.args.output_dim])
                 with _amp_ctx(use_amp_flag, amp_dtype):
@@ -230,6 +252,9 @@ class Trainer(object):
                                     B, T, N = y_pred01.shape[0], y_pred01.shape[1], y_pred01.shape[2]
                                     drivers = self._drivers.slice_bt(int(start_idx), T, N)
                                     drivers['use_adv'] = bool(getattr(self.args, 'use_adv', False))
+                                    if bool(getattr(self.args, 'nochem', False)):
+                                        drivers['alpha_nd'] = 0.0
+                                        drivers['beta_nd'] = 0.0
                                 lam = float(getattr(self.args, 'lambda_phys', 1.0))
                                 if lam != 0.0:
                                     # Avoid double-counting data term: exclude data from PPINN aggregation
@@ -308,7 +333,27 @@ class Trainer(object):
                         loss = loss_flow
             else:
                 with _amp_ctx(use_amp_flag, amp_dtype):
-                    output, out_time, mask, probability, eb2 = self.model(data, label, self.batch_seen)
+                    # Optional drivers input for de_gwn
+                    drivers_input = None
+                    if (str(getattr(self.args, 'model', '')).lower() == 'gwn') and bool(getattr(self.args, 'use_drivers', False)):
+                        try:
+                            from lib.physics.drivers import DriversStore
+                            if not hasattr(self, '_drivers'):
+                                self._drivers = DriversStore(self._drivers_path, device=self.args.device)
+                            B = data.size(0); T = data.size(1); N = data.size(2)
+                            sidx = int(start_idx) if start_idx is not None else 0
+                            d = self._drivers.slice_bt(sidx, T, N)
+                            ae = d['AE']; dst = d['Dst']; kp = d['Kp']; f107 = d['F107']; cosz = d.get('cosSZA')
+                            if cosz is None:
+                                import torch as _torch
+                                cosz = _torch.zeros_like(ae)
+                            drivers_input = torch.stack([ae, dst, kp, f107, cosz], dim=-1).expand(B, -1, -1, -1)
+                        except Exception:
+                            drivers_input = None
+                    try:
+                        output, out_time, mask, probability, eb2 = self.model(data, label, self.batch_seen, drivers_input=drivers_input)
+                    except TypeError:
+                        output, out_time, mask, probability, eb2 = self.model(data, label, self.batch_seen)
                     res = self.loss(output, target[..., :self.args.output_dim])
                     # loss functions may return (mean_loss, elementwise) tuples (e.g., mask_mae)
                     loss = res[0] if isinstance(res, tuple) else res
@@ -324,6 +369,9 @@ class Trainer(object):
                                 B, T, N = y_pred01.shape[0], y_pred01.shape[1], y_pred01.shape[2]
                                 drivers = self._drivers.slice_bt(int(start_idx), T, N)
                                 drivers['use_adv'] = bool(getattr(self.args, 'use_adv', False))
+                                if bool(getattr(self.args, 'nochem', False)):
+                                    drivers['alpha_nd'] = 0.0
+                                    drivers['beta_nd'] = 0.0
                             lam = float(getattr(self.args, 'lambda_phys', 1.0))
                             if lam != 0.0:
                                 # Avoid double-counting data term in training
@@ -655,36 +703,52 @@ class Trainer(object):
             return float(torch.nanmean(valid_vals).item()), ratio
 
         tag = str(save_tag) if save_tag is not None else 'eval'
-        if disable_mape:
-            # Log MAE/RMSE/CORR (nanmean) with valid ratio; values already in TECU.
-            corr_list = []
-            for t in range(y_true.shape[1]):
-                mae, _ = MAE_torch(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
-                rmse = RMSE_torch(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
-                corr_val, ratio = _corr_with_ratio(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
-                corr_list.append(corr_val)
-                logger.info("[{}] Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, CORR:{:.4f} (valid={:.1f}%)".format(
-                    tag, t + 1, mae, rmse, 0.0 if corr_val!=corr_val else corr_val, ratio*100))
-            mae, _ = MAE_torch(y_pred, y_true, args.mae_thresh)
-            rmse = RMSE_torch(y_pred, y_true, args.mae_thresh)
-            corr_vals = [c for c in corr_list if not (c!=c)]
-            corr_avg = sum(corr_vals)/len(corr_vals) if len(corr_vals)>0 else float('nan')
-            logger.info("[{}] Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, CORR:{:.4f}".format(
-                        tag, mae, rmse, 0.0 if corr_avg!=corr_avg else corr_avg))
-        else:
-            corr_list = []
-            for t in range(y_true.shape[1]):
-                mae, rmse, mape, _, _ = All_Metrics(y_pred[:, t, ...], y_true[:, t, ...],
-                                                    args.mae_thresh, args.mape_thresh)
-                corr_val, ratio = _corr_with_ratio(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
-                corr_list.append(corr_val)
-                logger.info("[{}] Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}, CORR:{:.4f} (valid={:.1f}%)".format(
-                    tag, t + 1, mae, rmse, mape*100, 0.0 if corr_val!=corr_val else corr_val, ratio*100))
-            mae, rmse, mape, _, _ = All_Metrics(y_pred, y_true, args.mae_thresh, args.mape_thresh)
-            corr_vals = [c for c in corr_list if not (c!=c)]
-            corr_avg = sum(corr_vals)/len(corr_vals) if len(corr_vals)>0 else float('nan')
-            logger.info("[{}] Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, MAPE: {:.4f}%, CORR:{:.4f}".format(
-                        tag, mae, rmse, mape*100, 0.0 if corr_avg!=corr_avg else corr_avg))
+        # Always report only MAE/RMSE/R2/CORR
+        corr_list = []
+        r2_list = []
+        for t in range(y_true.shape[1]):
+            mae, _ = MAE_torch(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
+            rmse = RMSE_torch(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
+            corr_val, ratio = _corr_with_ratio(y_pred[:, t, ...], y_true[:, t, ...], args.mae_thresh)
+            # R2 in TECU domain via numpy
+            try:
+                import numpy as _np
+                yt_np = y_true[:, t, ...].detach().cpu().numpy()
+                yp_np = y_pred[:, t, ...].detach().cpu().numpy()
+                m = _np.isfinite(yt_np) & _np.isfinite(yp_np)
+                if m.any():
+                    mu = float(_np.mean(yt_np[m]))
+                    ss_res = float(_np.sum((yp_np[m] - yt_np[m]) ** 2))
+                    ss_tot = float(_np.sum((yt_np[m] - mu) ** 2))
+                    r2 = float('nan') if ss_tot <= 0 else (1.0 - ss_res / ss_tot)
+                else:
+                    r2 = float('nan')
+            except Exception:
+                r2 = float('nan')
+            corr_list.append(corr_val)
+            r2_list.append(r2)
+            logger.info("[{}] Horizon {:02d}, MAE: {:.2f}, RMSE: {:.2f}, R2:{:.4f}, CORR:{:.4f} (valid={:.1f}%)".format(
+                tag, t + 1, mae, rmse, 0.0 if r2!=r2 else r2, 0.0 if corr_val!=corr_val else corr_val, ratio*100))
+        mae, _ = MAE_torch(y_pred, y_true, args.mae_thresh)
+        rmse = RMSE_torch(y_pred, y_true, args.mae_thresh)
+        # overall r2 by numpy
+        try:
+            import numpy as _np
+            yt = y_true.detach().cpu().numpy(); yp = y_pred.detach().cpu().numpy()
+            valid = _np.isfinite(yt) & _np.isfinite(yp)
+            if valid.any():
+                ss_res = float(_np.sum((yp[valid]-yt[valid])**2))
+                mu = float(_np.mean(yt[valid]))
+                ss_tot = float(_np.sum((yt[valid]-mu)**2))
+                r2_overall = float('nan') if ss_tot<=0 else (1.0 - ss_res/ss_tot)
+            else:
+                r2_overall = float('nan')
+        except Exception:
+            r2_overall = float('nan')
+        corr_vals = [c for c in corr_list if not (c!=c)]
+        corr_avg = sum(corr_vals)/len(corr_vals) if len(corr_vals)>0 else float('nan')
+        logger.info("[{}] Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, R2:{:.4f}, CORR:{:.4f}".format(
+                    tag, mae, rmse, 0.0 if r2_overall!=r2_overall else r2_overall, 0.0 if corr_avg!=corr_avg else corr_avg))
 
         # optionally save arrays for reproduction (float16 to reduce size)
         if save_arrays and log_filename:

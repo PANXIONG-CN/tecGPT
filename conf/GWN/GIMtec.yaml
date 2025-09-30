@@ -1,0 +1,25 @@
+data:
+  num_nodes: 5183
+  input_window: 12
+  output_window: 12
+  output_dim: 1
+  normalizer: tec01
+model:
+  name: GWN
+train:
+  epochs: 200
+  batch_size: 192
+  amp: true
+  optimizer: adam
+  scheduler: none
+  lr_init: 0.001
+  weight_decay: 0.0
+  early_stop: true
+  early_stop_patience: 20
+physics:
+  use_pinn: true
+  lambda_phys: 0.2
+  use_diffusion: true
+  use_drivers: true
+  use_adv: false
+  nochem: false

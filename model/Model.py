@@ -51,8 +51,14 @@ class Enhance_model(nn.Module):
 
         # For baseline predictors without GPT-ST enhancement, both 'ori' and 'test'
         # should use the raw input base dim. Only 'eval' (enhanced) uses hidden_dim.
+        # de_gwn expectation flag for runtime
+        self._gwn_expect_extra = (self.model == 'GWN' and bool(getattr(args, 'use_drivers', False)))
         if self.mode in ['ori', 'test']:
-            dim_in = self.input_base_dim
+            # de_gwn: add 5 driver channels when enabled
+            if self._gwn_expect_extra:
+                dim_in = self.input_base_dim + 5
+            else:
+                dim_in = self.input_base_dim
         else:
             dim_in = self.hidden_dim
         dim_out = self.output_dim
@@ -119,9 +125,9 @@ class Enhance_model(nn.Module):
         for param in self.pretrain_model.parameters():
             param.requires_grad = False
 
-    def forward(self, source, label, batch_seen=None):
+    def forward(self, source, label, batch_seen=None, drivers_input=None):
         if self.mode in ['ori', 'test']:
-            return self.forward_ori(source, label, batch_seen)
+            return self.forward_ori(source, label, batch_seen, drivers_input=drivers_input)
         else:
             return self.forward_pretrain(source, label, batch_seen)
 
@@ -138,12 +144,23 @@ class Enhance_model(nn.Module):
             x_predic = self.predictor(pretrain_eb)
         return x_predic, x_predic, x_predic, x_predic, x_predic
 
-    def forward_ori(self, source, label=None, batch_seen=None):
+    def forward_ori(self, source, label=None, batch_seen=None, drivers_input=None):
         if self.model == 'CCRNN':
             if label is None:
                 x_predic = self.predictor(source[:, :, :, 0:self.input_base_dim], None, None)
             else:
                 x_predic = self.predictor(source[:, :, :, 0:self.input_base_dim], label[:, :, :, 0:self.input_base_dim], None)
         else:
-            x_predic = self.predictor(source[:, :, :, 0:self.input_base_dim])
+            if self.model == 'GWN' and self._gwn_expect_extra:
+                import torch as _torch
+                base = source[:, :, :, 0:self.input_base_dim]
+                if drivers_input is None:
+                    # zero-fill 5 driver channels if upstream drivers not available
+                    zeros = _torch.zeros(base.size(0), base.size(1), base.size(2), 5, device=base.device, dtype=base.dtype)
+                    x_in = _torch.cat([base, zeros], dim=-1)
+                else:
+                    x_in = _torch.cat([base, drivers_input.to(base.device)], dim=-1)
+                x_predic = self.predictor(x_in)
+            else:
+                x_predic = self.predictor(source[:, :, :, 0:self.input_base_dim])
         return x_predic, x_predic, x_predic, x_predic, x_predic

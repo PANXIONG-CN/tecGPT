@@ -13,6 +13,16 @@ except Exception:
     pass
 import torch.nn as nn
 import configparser
+import time
+try:
+    import yaml
+except Exception:
+    yaml = None
+try:
+    import wandb
+except Exception:
+    wandb = None
+from pathlib import Path
 from model.Pretrain_model.GPTST import GPTST_Model as Network_Pretrain
 from model.Model import Enhance_model as Network_Predict
 from model.BasicTrainer import Trainer
@@ -22,6 +32,7 @@ from lib.TrainInits import print_model_parameters
 from lib.metrics import MAE_torch, MSE_torch, huber_loss
 from lib.Params_pretrain import parse_args
 from lib.Params_predictor import get_predictor_params
+from lib import results_io
 
 # *************************************************************************#
 
@@ -38,6 +49,40 @@ def Mkdir(path):
         os.makedirs(path)
 
 args = parse_args(device)
+
+def _yaml_overlay(args, args_predictor=None):
+    """Overlay YAML config onto args/args_predictor. YAML-first policy.
+    Priority: explicit -config > conf/<MODEL>/<DATASET>.yaml > no-op.
+    """
+    try:
+        cfg_path = getattr(args, 'config', '')
+        base = Path(file_dir) / 'conf' / str(getattr(args, 'model', '')) / f"{getattr(args, 'dataset', '')}.yaml"
+        ypath = Path(cfg_path) if cfg_path else base
+        if yaml is None or not ypath.exists():
+            return args, args_predictor
+        with open(ypath, 'r') as f:
+            y = yaml.safe_load(f) or {}
+        # sections we understand
+        cli_tokens = set(sys.argv[1:])
+        protected = {
+            'batch_size','epochs','val_ratio','test_ratio','amp','year_split',
+            'use_pinn','use_drivers','use_adv','use_diffusion','nochem','lambda_phys',
+        }
+        for sec, kv in y.items():
+            if not isinstance(kv, dict):
+                continue
+            for k, v in kv.items():
+                # args priorities: keep CLI single-hyphen overrides
+                if (k in protected) and (f'-{k}' in cli_tokens):
+                    pass
+                elif hasattr(args, k):
+                    setattr(args, k, v)
+                if args_predictor is not None and hasattr(args_predictor, k):
+                    setattr(args_predictor, k, v)
+        # unify epochs/early stop defaults if provided
+        return args, args_predictor
+    except Exception:
+        return args, args_predictor
 if args.mode !='pretrain':
     args_predictor = get_predictor_params(args)
     # Minimal override rule: if user explicitly passed certain single-hyphen flags
@@ -60,8 +105,12 @@ if args.mode !='pretrain':
                 # keep user-specified main arg value
                 continue
             setattr(args, attr, getattr(args_predictor, attr))
+    # Overlay YAML onto args + predictor (YAML-first)
+    args, args_predictor = _yaml_overlay(args, args_predictor)
 else:
     args_predictor = None
+    # Overlay YAML for pretrain too
+    args, _ = _yaml_overlay(args, None)
 
 # print effective arguments
 for arg in vars(args):
@@ -71,23 +120,17 @@ if args_predictor is not None:
     for arg in vars(args_predictor):
         print(arg, ':', getattr(args_predictor, arg))
 init_seed(args.seed, args.seed_mode)
+args._run_start_ts = time.strftime('%Y%m%d_%H%M%S')
 
 model_label = 'gptst' if args.mode == 'pretrain' else args.model
 print('mode: ', args.mode, '  model: ', model_label, '  dataset: ', args.dataset, '  load_pretrain_path: ', args.load_pretrain_path, '  save_pretrain_path: ', args.save_pretrain_path)
 
 
-# config log path
-# - pretrain outputs are predictor-agnostic → save under Output/<DATASET>/pretrain
-# - others keep Output/<DATASET>/<MODEL>
-repo_root = file_dir
+ # config outputs path (unified)
 if args.mode == 'pretrain':
-    # use explicit arch tag rather than overriding model name
-    args.arch_tag = 'gptst'
-    log_dir = os.path.join(repo_root, 'Output', args.dataset, 'pretrain')
-else:
-    log_dir = os.path.join(repo_root, 'Output', args.dataset, args.model)
-Mkdir(log_dir)
-args.log_dir = log_dir
+    # tag pretrain runs under pseudo-model 'gptst'
+    setattr(args, 'model', 'gptst')
+out_dir = results_io.prepare_outdir(args)
 args.load_pretrain_path = args.load_pretrain_path
 args.save_pretrain_path = args.save_pretrain_path
 
@@ -249,7 +292,7 @@ elif args.lr_decay:
 # args.log_dir = log_dir
 
 #start training
-
+args._train_start_time = time.time()
 trainer = Trainer(model, loss, loss_kl, optimizer, train_loader, val_loader, test_loader, scaler_data,
                   args, lr_scheduler=lr_scheduler)
 if args.mode == 'pretrain':
@@ -290,3 +333,22 @@ try:
         args.interval = 120
 except Exception:
     pass
+
+# finalize compute_cost timestamp
+try:
+    args._train_end_time = time.time()
+except Exception:
+    pass
+
+# W&B run init and finalize small files upload
+try:
+    run = None
+    if wandb is not None:
+        run = wandb.run or wandb.init(project=os.getenv('WANDB_PROJECT','Ion-Phys-Toolkit'),
+                                      entity=os.getenv('WANDB_ENTITY','xiongpan-tsinghua-university'),
+                                      config=vars(args))
+    results_io.post_run_collect_and_upload(run, args, model, out_dir)
+    if run is not None:
+        run.finish()
+except Exception as e:
+    print('results_io post-run failed:', e)

@@ -1,0 +1,123 @@
+2025-09-30 14:34: Experiment log path in: outputs/GIMtec/gwn/seed_12/20250930_143418
+2025-09-30 14:34: Command: python Run.py -dataset GIMtec -mode ori -model GWN -epochs 1 -batch_size 8 -amp False -use_drivers False -year_split True -stride_horizon True
+2025-09-30 14:34: Torch: 2.7.0+cu128  CUDA: True
+2025-09-30 14:34: GPU: NVIDIA H800 PCIe
+2025-09-30 14:34: CUDA_VISIBLE_DEVICES=None
+2025-09-30 14:34: HS: 10
+2025-09-30 14:34: HT: 16
+2025-09-30 14:34: HT_Tem: 8
+2025-09-30 14:34: _run_start_ts: 20250930_143418
+2025-09-30 14:34: _train_start_time: 1759214084.1955056
+2025-09-30 14:34: accumulate_steps: 1
+2025-09-30 14:34: ada_mask_ratio: 1.0
+2025-09-30 14:34: ada_type: all
+2025-09-30 14:34: amp: True
+2025-09-30 14:34: batch_size: 8
+2025-09-30 14:34: change_epoch: 5
+2025-09-30 14:34: cmdline: python Run.py -dataset GIMtec -mode ori -model GWN -epochs 1 -batch_size 8 -amp False -use_drivers False -year_split True -stride_horizon True
+2025-09-30 14:34: column_wise: False
+2025-09-30 14:34: config: 
+2025-09-30 14:34: cosine_t_max: 100
+2025-09-30 14:34: cuda: True
+2025-09-30 14:34: dataset: GIMtec
+2025-09-30 14:34: debug: False
+2025-09-30 14:34: debug_max_steps: 1000
+2025-09-30 14:34: default_graph: True
+2025-09-30 14:34: device: cuda
+2025-09-30 14:34: early_stop: True
+2025-09-30 14:34: early_stop_min_delta: 0.0
+2025-09-30 14:34: early_stop_patience: 20
+2025-09-30 14:34: embed_dim: 16
+2025-09-30 14:34: embed_dim_spa: 4
+2025-09-30 14:34: epochs: 1
+2025-09-30 14:34: eta_min_factor: 0.01
+2025-09-30 14:34: grad_clip: 0.0
+2025-09-30 14:34: grad_norm: True
+2025-09-30 14:34: graph_tag: grid8
+2025-09-30 14:34: hidden_dim: 64
+2025-09-30 14:34: horizon: 12
+2025-09-30 14:34: init_from: 
+2025-09-30 14:34: input_base_dim: 1
+2025-09-30 14:34: input_extra_dim: 2
+2025-09-30 14:34: interval: 120
+2025-09-30 14:34: json_name: eval_results.json
+2025-09-30 14:34: kappa_nd: 0.05
+2025-09-30 14:34: lag: 12
+2025-09-30 14:34: lambda_phys: 0.2
+2025-09-30 14:34: load_pretrain_path: /GPTST_ada.pth
+2025-09-30 14:34: log_dir: outputs/GIMtec/gwn/seed_12/20250930_143418
+2025-09-30 14:34: log_step: 20
+2025-09-30 14:34: loss_func: mask_mae
+2025-09-30 14:34: lr_decay: True
+2025-09-30 14:34: lr_decay_rate: 0.3
+2025-09-30 14:34: lr_decay_step: 25, 50, 75
+2025-09-30 14:34: lr_init: 0.001
+2025-09-30 14:34: mae_thresh: None
+2025-09-30 14:34: mape_thresh: 0.001
+2025-09-30 14:34: mask_ratio: 0.25
+2025-09-30 14:34: max_grad_norm: 5
+2025-09-30 14:34: min_lr: 0.0
+2025-09-30 14:34: mode: ori
+2025-09-30 14:34: model: GWN
+2025-09-30 14:34: nochem: False
+2025-09-30 14:34: normalizer: tec01
+2025-09-30 14:34: num_nodes: 5183
+2025-09-30 14:34: num_route: 2
+2025-09-30 14:34: optimizer: adam
+2025-09-30 14:34: output_dim: 1
+2025-09-30 14:34: plateau_cooldown: 10
+2025-09-30 14:34: plateau_factor: 0.9
+2025-09-30 14:34: plateau_patience: 20
+2025-09-30 14:34: plateau_threshold: 1e-05
+2025-09-30 14:34: plateau_threshold_mode: abs
+2025-09-30 14:34: plot: False
+2025-09-30 14:34: prefix_boundary: True
+2025-09-30 14:34: real_value: False
+2025-09-30 14:34: rot_cap: 0.5
+2025-09-30 14:34: roti_cap_scale: 0.7
+2025-09-30 14:34: save_json: False
+2025-09-30 14:34: save_pretrain_path: new_pretrain_model.pth
+2025-09-30 14:34: scaler_zeros: 0.0
+2025-09-30 14:34: scaler_zeros_day: 0
+2025-09-30 14:34: scaler_zeros_week: 0
+2025-09-30 14:34: scheduler: none
+2025-09-30 14:34: seed: 12
+2025-09-30 14:34: seed_mode: True
+2025-09-30 14:34: stride_horizon: True
+2025-09-30 14:34: t_ref_sec: 7200.0
+2025-09-30 14:34: target_model: generic
+2025-09-30 14:34: tec_ref: 50.0
+2025-09-30 14:34: test_ratio: 0.1
+2025-09-30 14:34: tod: False
+2025-09-30 14:34: up_epoch: 6, 8
+2025-09-30 14:34: use_adv: False
+2025-09-30 14:34: use_diffusion: True
+2025-09-30 14:34: use_drivers: True
+2025-09-30 14:34: use_pinn: True
+2025-09-30 14:34: val_ratio: 0.1
+2025-09-30 14:34: week_day: 7
+2025-09-30 14:34: weight_decay: 0.0
+2025-09-30 14:34: xavier: False
+2025-09-30 14:34: year_split: True
+2025-09-30 14:34: PPINN parameters added to optimizer.
+2025-09-30 14:34: Train Epoch 1: 0/320 Loss: 14.741562 (running_avg: 14.741562)
+2025-09-30 14:34: Train Epoch 1: 20/320 Loss: 4.490400 (running_avg: 7.566289)
+2025-09-30 14:35: Train Epoch 1: 40/320 Loss: 6.745762 (running_avg: 6.387922)
+2025-09-30 14:35: Train Epoch 1: 60/320 Loss: 2.238971 (running_avg: 5.537277)
+2025-09-30 14:35: Train Epoch 1: 80/320 Loss: 2.734918 (running_avg: 5.080041)
+2025-09-30 14:35: Train Epoch 1: 100/320 Loss: 5.714429 (running_avg: 4.722225)
+2025-09-30 14:35: Train Epoch 1: 120/320 Loss: 3.206224 (running_avg: 4.621939)
+2025-09-30 14:35: Train Epoch 1: 140/320 Loss: 2.660917 (running_avg: 4.446830)
+2025-09-30 14:35: Train Epoch 1: 160/320 Loss: 3.891250 (running_avg: 4.335571)
+2025-09-30 14:35: Train Epoch 1: 180/320 Loss: 3.079431 (running_avg: 4.224158)
+2025-09-30 14:35: Train Epoch 1: 200/320 Loss: 3.063540 (running_avg: 4.114791)
+2025-09-30 14:35: Train Epoch 1: 220/320 Loss: 4.100873 (running_avg: 4.040969)
+2025-09-30 14:35: Train Epoch 1: 240/320 Loss: 3.504250 (running_avg: 4.013936)
+2025-09-30 14:35: Train Epoch 1: 260/320 Loss: 2.190107 (running_avg: 3.907305)
+2025-09-30 14:35: Train Epoch 1: 280/320 Loss: 3.062880 (running_avg: 3.847247)
+2025-09-30 14:35: Train Epoch 1: 300/320 Loss: 2.095663 (running_avg: 3.820877)
+2025-09-30 14:35: **********Train Epoch 1: averaged Loss: 3.809796 (per-batch mean)
+2025-09-30 14:36: **********Val Epoch 1: average Loss: 2.344708
+2025-09-30 14:36: *********************************Current best model saved!
+2025-09-30 14:36: Total training time: 1.3590min, best loss: 2.344708
+2025-09-30 14:36: Saving current model to outputs/GIMtec/gwn/seed_12/20250930_143418/20250930_143444_GIMtec_GWN_ori.pth

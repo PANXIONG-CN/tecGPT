@@ -1,0 +1,16 @@
+model:
+  name: OptimizedCSA_WTConvLSTM
+train:
+  epochs: 200
+  batch_size: 64
+  amp: true
+  optimizer: adam
+  scheduler: plateau
+  plateau_factor: 0.5
+  plateau_patience: 20
+  lr_init: 0.001
+  weight_decay: 0.0
+  early_stop: true
+  early_stop_patience: 20
+loss:
+  loss_func: mask_mae

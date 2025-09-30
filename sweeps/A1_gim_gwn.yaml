@@ -1,0 +1,13 @@
+name: A1_gim_gwn
+method: grid
+command:
+  - bash
+  - scripts/launch_single_run.sh
+parameters:
+  dataset: {values: ["GIMtec"]}
+  model:   {values: ["GWN"]}
+  seed:    {values: [0, 42, 1001]}
+  use_pinn:    {values: [true, false]}
+  use_drivers: {values: [true]}
+  use_adv:     {values: [true, false]}
+  use_diffusion: {values: [true, false]}
