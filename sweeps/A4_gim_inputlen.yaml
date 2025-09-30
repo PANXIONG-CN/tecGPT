@@ -1,0 +1,8 @@
+name: A4_gim_inputlen
+method: grid
+parameters:
+  dataset: {values: ["GIMtec"]}
+  model:   {values: ["GWN"]}
+  seed:    {values: [2025,3407,42]}
+  input_window: {values: [12,24,36]}
+command: [bash, -lc, "bash scripts/launch_single_run.sh"]

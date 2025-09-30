@@ -1,0 +1,7 @@
+name: A3_gim_background
+method: grid
+parameters:
+  dataset: {values: ["GIMtec"]}
+  model:   {values: ["ConvLSTM","IRI_2020"]}
+  seed:    {values: [42,2025,3407]}
+command: [bash, -lc, "bash scripts/launch_single_run.sh"]

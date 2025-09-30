@@ -1,0 +1,7 @@
+name: A6_gim_seq
+method: grid
+parameters:
+  dataset: {values: ["GIMtec"]}
+  model:   {values: ["PredRNN"]}
+  seed:    {values: [2025,3407,42,7,11]}
+command: [bash, -lc, "bash scripts/launch_single_run.sh"]

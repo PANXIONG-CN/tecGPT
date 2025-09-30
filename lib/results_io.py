@@ -28,8 +28,10 @@ DATASET_SLUGS = {
 }
 
 
-def _now_ts() -> str:
-    return time.strftime('%Y%m%d_%H%M%S')
+def _now_utc_ts() -> str:
+    # UTC ISO-like without colons: %Y%m%dT%H%M%SZ
+    import datetime as _dt
+    return _dt.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
 
 
 def dataset_slug(name: str) -> str:
@@ -105,15 +107,33 @@ def _compute_digest(arr: np.ndarray) -> str:
 
 # ------------------------ main entrypoints ---------------------
 
-def prepare_outdir(args) -> Path:
-    ds = getattr(args, 'dataset', 'DATASET')
+def prepare_outdir(args, run_tag: Optional[str] = None) -> Path:
+    dataset_name = getattr(args, 'dataset', 'DATASET')
+    ds_slug = dataset_slug(dataset_name)
     model_slug_val = getattr(args, 'model', 'model').lower()
     seed = int(getattr(args, 'seed', 0))
-    ts = _now_ts()
-    base = Path('outputs') / ds / model_slug_val / f'seed_{seed}' / ts
+    tag = run_tag or _now_utc_ts()
+    base = Path('outputs') / ds_slug / model_slug_val / f'seed_{seed}' / tag
     ensure_dir(base)
     # propagate back for the rest of the pipeline
     args.log_dir = str(base)
+    # record ts_utc + run_tag for manifest use
+    try:
+        if not getattr(args, 'ts_utc', None):
+            args.ts_utc = tag.split('-', 1)[0]
+        args.run_tag = tag
+    except Exception:
+        pass
+    # best-effort dataset-level symlink (e.g., outputs/GIMtec -> outputs/gim)
+    try:
+        ds_upper = str(dataset_name)
+        if ds_upper and ds_upper.lower() != ds_slug:
+            legacy = Path('outputs') / ds_upper
+            target = Path('outputs') / ds_slug
+            if not legacy.exists():
+                legacy.symlink_to(target, target_is_directory=True)
+    except Exception:
+        pass
     return base
 
 
@@ -196,10 +216,10 @@ def _save_json(path: Path, obj: Dict):
 
 
 def _save_stepwise_csv(path: Path, rows: List[Dict[str, object]]):
-    # columns: horizon, MAE, RMSE, R2, CORR, valid_ratio
+    # columns: seed,dataset,model_slug,horizon,step,rmse
     import csv
     path.parent.mkdir(parents=True, exist_ok=True)
-    cols = ['horizon', 'MAE', 'RMSE', 'R2', 'CORR', 'valid_ratio']
+    cols = ['seed', 'dataset', 'model_slug', 'horizon', 'step', 'rmse']
     with open(path, 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
@@ -220,12 +240,7 @@ def _wandb_log_artifact(run, file_path: Path, atype: str = 'file', aliases: Opti
         pass
 
 
-def post_run_collect_and_upload(
-    run,
-    args,
-    model,
-    out_dir: Path,
-) -> None:
+def post_run_collect_and_upload(run, args, model, out_dir: Path) -> None:
     """Unify final result saving and small-file uploading.
 
     - Create metrics.json, stepwise_rmse.csv, compute_cost.json, manifest.json if missing.
@@ -265,24 +280,25 @@ def post_run_collect_and_upload(
                 if t_candidates:
                     ytrue = np.load(str(t_candidates[0]))
             if ytrue is not None and ytrue.shape[:3] == yp.shape[:3]:
+                # overall
+                ss_res = float(np.nansum((yp - ytrue) ** 2))
+                mu = float(np.nanmean(ytrue))
+                ss_tot = float(np.nansum((ytrue - mu) ** 2))
+                rrse = float('nan') if ss_tot <= 0 else float(np.sqrt(ss_res / ss_tot))
                 overall_mae, overall_rmse = mae_rmse(ytrue, yp)
-                overall_r2 = r2_score(ytrue, yp)
+                overall_r2 = float('nan') if ss_tot <= 0 else float(1.0 - (ss_res / ss_tot))
                 overall_corr = corr_score(ytrue, yp)
+                # per-horizon rows for unified CSV (seed,dataset,model_slug,horizon,step,rmse)
                 rows = []
-                # per-horizon
                 H = yp.shape[1]
+                ds_slug = dataset_slug(getattr(args, 'dataset', ''))
+                model_slug = str(getattr(args, 'model', 'model')).lower()
+                seed = int(getattr(args, 'seed', 0))
                 for h in range(H):
-                    mae_h, rmse_h = mae_rmse(ytrue[:, h, ...], yp[:, h, ...])
-                    r2_h = r2_score(ytrue[:, h, ...], yp[:, h, ...])
-                    corr_h = corr_score(ytrue[:, h, ...], yp[:, h, ...])
-                    rows.append({
-                        'horizon': h + 1,
-                        'MAE': round(mae_h, 6) if mae_h == mae_h else None,
-                        'RMSE': round(rmse_h, 6) if rmse_h == rmse_h else None,
-                        'R2': round(r2_h, 6) if r2_h == r2_h else None,
-                        'CORR': round(corr_h, 6) if corr_h == corr_h else None,
-                        'valid_ratio': 1.0,
-                    })
+                    # stepwise RMSE per horizon
+                    _, rmse_h = mae_rmse(ytrue[:, h, ...], yp[:, h, ...])
+                    rows.append({'seed': seed, 'dataset': ds_slug, 'model_slug': model_slug,
+                                 'horizon': h + 1, 'step': h + 1, 'rmse': round(rmse_h, 6) if rmse_h == rmse_h else None})
                 _save_stepwise_csv(stepwise_path, rows)
                 _save_json(metrics_path, {
                     'overall': {
@@ -290,6 +306,7 @@ def post_run_collect_and_upload(
                         'RMSE': overall_rmse,
                         'R2': overall_r2,
                         'CORR': overall_corr,
+                        'RRSE': rrse,
                     }
                 })
         except Exception:
@@ -347,6 +364,12 @@ def post_run_collect_and_upload(
             },
             'truth_ref': truth_ref,
             'truth_digest': truth_digest,
+            'ts_utc': getattr(args, 'ts_utc', None) or _now_utc_ts(),
+            'run_id': getattr(args, 'wandb_run_id', None),
+            'run_tag': getattr(args, 'run_tag', None),
+            'oss_prefix': f"Ion-Phys-Toolkit/{dataset_slug(getattr(args,'dataset',''))}/"
+                           f"{str(getattr(args,'model','')).lower()}/seed_{int(getattr(args,'seed',0))}/"
+                           f"{getattr(args,'run_tag', '')}/",
         }
         _save_json(man_path, man)
 
@@ -355,4 +378,3 @@ def post_run_collect_and_upload(
     _wandb_log_artifact(run, stepwise_path, atype='results')
     _wandb_log_artifact(run, cc_path, atype='results')
     _wandb_log_artifact(run, man_path, atype='results')
-

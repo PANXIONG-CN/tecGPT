@@ -1,0 +1,10 @@
+name: D1_china_hires_loo
+method: grid
+parameters:
+  dataset: {values: ["china_hires"]}
+  model:   {values: ["GWN"]}
+  seed:    {values: [2025]}
+  use_pinn:    {values: [true]}
+  use_drivers: {values: [true]}
+  loo_region:  {values: ["south","tibet","xinjiang"]}
+command: [bash, -lc, "bash scripts/launch_single_run.sh"]

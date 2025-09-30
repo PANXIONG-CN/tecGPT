@@ -1,0 +1,7 @@
+name: A2_gim_important
+method: grid
+parameters:
+  dataset:   {values: ["GIMtec"]}
+  model:     {values: ["TEC_MoLLM","OptimizedCSA_WTConvLSTM"]}
+  seed:      {values: [2025,3407,42,7,11]}
+command: [bash, -lc, "bash scripts/launch_single_run.sh"]

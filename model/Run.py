@@ -14,6 +14,7 @@ except Exception:
 import torch.nn as nn
 import configparser
 import time
+from datetime import datetime
 try:
     import yaml
 except Exception:
@@ -120,17 +121,58 @@ if args_predictor is not None:
     for arg in vars(args_predictor):
         print(arg, ':', getattr(args_predictor, arg))
 init_seed(args.seed, args.seed_mode)
-args._run_start_ts = time.strftime('%Y%m%d_%H%M%S')
+# UTC ts for standardized naming (e.g., 20250101T000000Z)
+try:
+    args.ts_utc = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+except Exception:
+    args.ts_utc = time.strftime('%Y%m%dT%H%M%SZ')
+args._run_start_ts = args.ts_utc
 
 model_label = 'gptst' if args.mode == 'pretrain' else args.model
 print('mode: ', args.mode, '  model: ', model_label, '  dataset: ', args.dataset, '  load_pretrain_path: ', args.load_pretrain_path, '  save_pretrain_path: ', args.save_pretrain_path)
 
 
- # config outputs path (unified)
+ # config outputs path (unified with run_tag = ts_utc + 8-char run id)
+def _with_wandb_proxy():
+    p = os.getenv('PROXY_SOCKS5', '')
+    if not p:
+        return None
+    prev = {k: os.environ.get(k) for k in ('HTTP_PROXY','HTTPS_PROXY','ALL_PROXY')}
+    os.environ['HTTP_PROXY'] = p
+    os.environ['HTTPS_PROXY'] = p
+    os.environ['ALL_PROXY'] = p
+    return prev
+
+def _restore_proxy(prev):
+    if prev is None:
+        return
+    for k, v in prev.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+# Initialize W&B early to get run id (proxy only for W&B)
+run = None
+try:
+    prev_proxy = _with_wandb_proxy()
+    if wandb is not None:
+        run = wandb.run or wandb.init(project=os.getenv('WANDB_PROJECT','Ion-Phys-Toolkit'),
+                                      entity=os.getenv('WANDB_ENTITY','xiongpan-tsinghua-university'),
+                                      config=vars(args))
+        args.wandb_run_id = getattr(run, 'id', None)
+    _restore_proxy(prev_proxy)
+except Exception:
+    _restore_proxy(prev_proxy)
+    run = None
+    args.wandb_run_id = None
+
+rid8 = (args.wandb_run_id or 'local')[:8]
+run_tag = f"{args.ts_utc}-{rid8}"
 if args.mode == 'pretrain':
     # tag pretrain runs under pseudo-model 'gptst'
     setattr(args, 'model', 'gptst')
-out_dir = results_io.prepare_outdir(args)
+out_dir = results_io.prepare_outdir(args, run_tag=run_tag)
 args.load_pretrain_path = args.load_pretrain_path
 args.save_pretrain_path = args.save_pretrain_path
 
@@ -302,7 +344,7 @@ elif args.mode == 'eval':
 elif args.mode == 'ori':
     trainer.train()
 elif args.mode == 'test':
-    model.load_state_dict(torch.load(log_dir + '/best_model.pth'))
+    model.load_state_dict(torch.load(args.log_dir + '/best_model.pth'))
     print("Load saved model")
     trainer.test(model, trainer.args, test_loader, scaler_data, trainer.logger,
                  save_arrays=True, save_tag='test', log_filename=getattr(trainer,'log_filename',None))
@@ -340,15 +382,13 @@ try:
 except Exception:
     pass
 
-# W&B run init and finalize small files upload
+# W&B finalize + small files upload (proxy only for W&B)
 try:
-    run = None
-    if wandb is not None:
-        run = wandb.run or wandb.init(project=os.getenv('WANDB_PROJECT','Ion-Phys-Toolkit'),
-                                      entity=os.getenv('WANDB_ENTITY','xiongpan-tsinghua-university'),
-                                      config=vars(args))
+    prev_proxy = _with_wandb_proxy()
     results_io.post_run_collect_and_upload(run, args, model, out_dir)
     if run is not None:
         run.finish()
+    _restore_proxy(prev_proxy)
 except Exception as e:
+    _restore_proxy(prev_proxy)
     print('results_io post-run failed:', e)

@@ -1,0 +1,7 @@
+name: D2_china_hires_hybrid
+method: grid
+parameters:
+  dataset: {values: ["china_hires"]}
+  model:   {values: ["ResidualHybrid"]}
+  seed:    {values: [2025,3407,42,7,11]}
+command: [bash, -lc, "bash scripts/launch_single_run.sh"]

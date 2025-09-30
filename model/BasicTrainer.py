@@ -652,12 +652,15 @@ class Trainer(object):
         model.eval()
         y_pred = []
         y_true = []
+        _batch_start_idx = []
+        _batch_T = []
         with torch.no_grad():
             for batch_idx, batch in enumerate(data_loader):
                 if isinstance(batch, (list, tuple)) and len(batch) == 3:
-                    data, target, _ = batch
+                    data, target, sidx = batch
                 else:
                     data, target = batch
+                    sidx = None
                 data = data.to(args.device, non_blocking=True)
                 target = target.to(args.device, non_blocking=True)
                 data = data[..., :args.input_base_dim + args.input_extra_dim]
@@ -671,6 +674,11 @@ class Trainer(object):
                     label = target[..., :args.output_dim]
                     y_true.append(label)
                     y_pred.append(output)
+                try:
+                    _batch_T.append(int(output.shape[1]))
+                except Exception:
+                    _batch_T.append(None)
+                _batch_start_idx.append(int(sidx) if sidx is not None else None)
 
         y_true = scaler.inverse_transform(torch.cat(y_true, dim=0))
         y_pred = scaler.inverse_transform(torch.cat(y_pred, dim=0))
@@ -749,6 +757,67 @@ class Trainer(object):
         corr_avg = sum(corr_vals)/len(corr_vals) if len(corr_vals)>0 else float('nan')
         logger.info("[{}] Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, R2:{:.4f}, CORR:{:.4f}".format(
                     tag, mae, rmse, 0.0 if r2_overall!=r2_overall else r2_overall, 0.0 if corr_avg!=corr_avg else corr_avg))
+
+        # physics metrics (PINN) — only when enabled and drivers available
+        try:
+            if bool(getattr(args, 'use_pinn', False)):
+                phys = {}
+                yp_np = y_pred.detach().cpu().numpy(); yt_np = y_true.detach().cpu().numpy()
+                # nonneg_rate
+                phys['nonneg_rate'] = float(np.mean(yp_np >= 0.0))
+                # ROT/ROTI validity (TECU per minute)
+                dt_min = float(getattr(args, 'interval', 120))
+                if yp_np.shape[1] >= 2 and dt_min > 0:
+                    rot = (yp_np[:, 1:, ...] - yp_np[:, :-1, ...]) / dt_min
+                    rot_cap = float(getattr(args, 'rot_cap', 0.5))
+                    phys['rot_validity'] = float(np.mean(np.abs(rot) <= rot_cap))
+                    # roti: rolling std over window=3
+                    if rot.shape[1] >= 3:
+                        w = 3
+                        # compute rolling std along time
+                        roti = np.stack([rot[:, i:i+w, ...].std(axis=1) for i in range(rot.shape[1]-w+1)], axis=1)
+                        roti_cap = float(getattr(args, 'roti_cap_scale', 0.7)) * rot_cap
+                        phys['roti_validity'] = float(np.mean(roti <= roti_cap))
+                    else:
+                        phys['roti_validity'] = None
+                else:
+                    phys['rot_validity'] = None
+                    phys['roti_validity'] = None
+                # night monotonicity with cosSZA mask if drivers available and start_idx provided
+                night_ratio = None
+                try:
+                    from lib.physics.drivers import DriversStore
+                    # attempt per-batch evaluation to avoid large memory
+                    store = DriversStore(self._drivers_path, device='cpu')
+                    total_mask = 0; total_ok = 0
+                    offset = 0
+                    for b_idx, (sidx, T) in enumerate(zip(_batch_start_idx, _batch_T)):
+                        if sidx is None or T is None or T < 2:
+                            offset += (y_pred.shape[0] if b_idx==0 else 0)
+                            continue
+                        # slice within this batch range
+                        B = 1  # per-sample aggregated later; approximate using broadcast
+                        N = yp_np.shape[2]
+                        d = store.slice_bt(int(sidx), int(T), int(N))
+                        if 'cosSZA' in d:
+                            cosz = d['cosSZA'].cpu().numpy()  # [1,T,N]
+                            # take predicted for this batch-chunk (approx: use entire batch window)
+                            yp_bt = yp_np[offset:offset+1, :T, :, :]
+                            y_t = yp_bt[:, :-1, :, 0]
+                            y_tp1 = yp_bt[:, 1:, :, 0]
+                            night = (cosz[:, :-1, :] <= 0.0)
+                            total_mask += int(night.sum())
+                            total_ok += int(((y_tp1 - y_t) <= 0.0)[night].sum())
+                        offset += 1
+                    night_ratio = (float(total_ok) / float(total_mask)) if total_mask > 0 else None
+                except Exception:
+                    night_ratio = None
+                phys['night_monotonicity'] = night_ratio
+                import json, os
+                with open(os.path.join(args.log_dir, 'physics_metrics.json'), 'w') as f:
+                    json.dump(phys, f, indent=2)
+        except Exception as e:
+            logger.warning(f"physics_metrics.json skipped: {e}")
 
         # optionally save arrays for reproduction (float16 to reduce size)
         if save_arrays and log_filename:

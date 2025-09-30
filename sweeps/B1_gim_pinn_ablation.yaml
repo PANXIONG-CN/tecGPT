@@ -1,0 +1,12 @@
+name: B1_gim_pinn_ablation
+method: grid
+parameters:
+  dataset: {values: ["GIMtec"]}
+  model:   {values: ["GWN"]}
+  seed:    {values: [2025,3407,42,7,11]}
+  use_pinn:      {values: [true]}
+  use_drivers:   {values: [false,true,true,true,true]}
+  use_adv:       {values: [false,false,true,true,true]}
+  use_diffusion: {values: [true, true,  true,  false,true]}
+  nochem:        {values: [false,false,false,false,true]}
+command: [bash, -lc, "bash scripts/launch_single_run.sh"]

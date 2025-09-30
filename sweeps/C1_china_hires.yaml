@@ -1,0 +1,10 @@
+name: C1_china_hires
+method: grid
+parameters:
+  dataset: {values: ["china_hires"]}
+  model:   {values: ["GWN"]}
+  seed:    {values: [2025,3407,42,7,11]}
+  use_pinn:    {values: [true]}
+  use_drivers: {values: [true,false]}
+  year_split:  {values: [true]}
+command: [bash, -lc, "bash scripts/launch_single_run.sh"]

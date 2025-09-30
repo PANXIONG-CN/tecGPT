@@ -1,0 +1,7 @@
+name: A5_gim_biz
+method: grid
+parameters:
+  dataset: {values: ["GIMtec"]}
+  model:   {values: ["IRI_2020","C1PG"]}
+  seed:    {values: [42]}
+command: [bash, -lc, "bash scripts/launch_single_run.sh"]
