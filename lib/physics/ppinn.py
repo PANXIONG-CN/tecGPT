@@ -57,7 +57,9 @@ class PPinnLoss(nn.Module):
                  kappa_nd: float = 0.05,
                  roti_w: int = 3,
                  use_diffusion: bool = True,
-                 use_drivers: bool = False):
+                 use_drivers: bool = False,
+                 use_dynamic_rot_cap: bool = True,
+                 rot_cap_k: float = 0.01):
         super().__init__()
         self.scaler = scaler_data
         self.use_diffusion = bool(use_diffusion)
@@ -68,10 +70,15 @@ class PPinnLoss(nn.Module):
         self.dt_nd = self.dt_sec / self.t_ref_sec
         # value scaling
         self.tec_ref = float(tec_ref)
-        # ROT/ROTI caps in nondimensional units
+        # ROT/ROTI caps in nondimensional units (static base)
         rot_cap_per_sec = float(rot_cap_tecu_per_min) / 60.0
         self.rot_cap_nd = (self.t_ref_sec / self.tec_ref) * rot_cap_per_sec
         self.roti_cap_nd = float(roti_cap_scale) * self.rot_cap_nd
+        # dynamic options
+        self.use_dynamic_rot_cap = bool(use_dynamic_rot_cap)
+        self.rot_cap_base_tecu_per_min = float(rot_cap_tecu_per_min)
+        self.roti_cap_scale = float(roti_cap_scale)
+        self.rot_cap_k = float(rot_cap_k)
         self.roti_w = max(2, int(roti_w))
         # diffusion coefficient (nondimensional)
         self.kappa_nd = float(kappa_nd)
@@ -138,8 +145,32 @@ class PPinnLoss(nn.Module):
 
         # (1) ROT / ROTI caps (soft penalty)
         rot_nd, roti_nd = self._rot_roti_nd(y_nd)
-        rot_pen = F.relu(rot_nd.abs() - self.rot_cap_nd)
-        roti_pen = F.relu(roti_nd - self.roti_cap_nd)
+        # dynamic ROT/ROTI caps if drivers available
+        dyn_rot_cap_nd = None
+        dyn_roti_cap_nd = None
+        if self.use_drivers and self.use_dynamic_rot_cap and drivers is not None and ('Dst' in drivers):
+            try:
+                dst = drivers['Dst']  # [B?,T,N] or [1,T,N]
+                if dst.dim() == 3:
+                    # TECU/min base cap adjusted by Dst (nT): rot_cap = base * (1 + k * max(0,-Dst)/100)
+                    dstn = torch.clamp(-dst, min=0.0)  # positive when Dst<0
+                    scale = 1.0 + self.rot_cap_k * (dstn / 100.0)
+                    cap_tecu_per_min = self.rot_cap_base_tecu_per_min * scale  # [B?,T,N]
+                    cap_per_sec = cap_tecu_per_min / 60.0
+                    dyn_rot_cap_nd = (self.t_ref_sec / self.tec_ref) * cap_per_sec  # [B?,T,N]
+                    # align to [B,T-1,N,1]
+                    if dyn_rot_cap_nd.dim() == 3:
+                        dyn_rot_cap_nd = dyn_rot_cap_nd[:, 1:, :].unsqueeze(-1)
+                    dyn_roti_cap_nd = self.roti_cap_scale * dyn_rot_cap_nd
+            except Exception:
+                dyn_rot_cap_nd = None
+        # penalties
+        if dyn_rot_cap_nd is not None:
+            rot_pen = F.relu(rot_nd.abs() - dyn_rot_cap_nd)
+            roti_pen = F.relu(roti_nd - dyn_roti_cap_nd)
+        else:
+            rot_pen = F.relu(rot_nd.abs() - self.rot_cap_nd)
+            roti_pen = F.relu(roti_nd - self.roti_cap_nd)
 
         # (2) diffusion: (y_{t+1}' - y_t') - dt' * kappa' * (-L y_t') ~ 0
         loss_diff = torch.tensor(0.0, device=y_nd.device)
