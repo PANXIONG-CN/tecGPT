@@ -3,6 +3,19 @@ import os
 import time
 import copy
 import numpy as np
+import math
+from time import perf_counter
+try:
+    import wandb
+except Exception:
+    wandb = None
+try:
+    import requests, oss2
+except Exception:
+    requests = None
+    oss2 = None
+from threading import Thread
+from lib import results_io
 from lib.logger import get_logger
 from lib.metrics import All_Metrics, MAE_torch, RMSE_torch, CORR_torch
 try:
@@ -12,6 +25,37 @@ try:
 except Exception:
     load_or_build_adj = None
     PPinnLoss = None
+
+# --- Local W&B proxy injection helpers -------------------------------------
+def _with_wandb_proxy():
+    """Temporarily inject SOCKS5 proxy envs for W&B calls only.
+    Reads `PROXY_SOCKS5` (e.g., socks5h://host:port) and sets HTTP(S)_PROXY/ALL_PROXY.
+    Returns a dict of previous values to restore.
+    """
+    try:
+        p = os.getenv('PROXY_SOCKS5', '')
+        if not p:
+            return None
+        prev = {k: os.environ.get(k) for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY')}
+        os.environ['HTTP_PROXY'] = p
+        os.environ['HTTPS_PROXY'] = p
+        os.environ['ALL_PROXY'] = p
+        return prev
+    except Exception:
+        return None
+
+
+def _restore_proxy(prev):
+    try:
+        if prev is None:
+            return
+        for k, v in prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    except Exception:
+        pass
 
 # --- AMP/BF16 helpers -------------------------------------------------------
 def _has_bf16_cuda() -> bool:
@@ -55,6 +99,9 @@ class Trainer(object):
         self.best_link_path = None
         self.best_path = None
         self.loss_figure_path = None
+        # W&B state
+        self._wandb_status_logged = False
+        self._wandb_first_log_done = False
         #log
         if os.path.isdir(args.log_dir) == False and not args.debug:
             os.makedirs(args.log_dir, exist_ok=True)
@@ -168,10 +215,100 @@ class Trainer(object):
         except Exception:
             self._drivers_path = "./data/GIMtec/drivers/drivers_2009_2022_2h.npz"
 
+    # ------------------------ W&B utilities ------------------------
+    def _wandb_prepare(self):
+        """Ensure W&B run exists (retry init once) and log status line once.
+        Uses local proxy injection around wandb.init to avoid global side effects.
+        """
+        if wandb is None:
+            return None
+        run = getattr(wandb, 'run', None)
+        if run is None:
+            prev = _with_wandb_proxy()
+            try:
+                # reconstruct entity/project/tags like model/Run.py
+                from lib import results_io as _rio
+                ds_slug = _rio.dataset_slug(getattr(self.args, 'dataset', ''))
+                md_slug = str(getattr(self.args, 'model', 'model')).lower()
+                tags = [
+                    f"seed_{int(getattr(self.args,'seed',0))}",
+                    f"amp_{bool(getattr(self.args,'amp',False))}",
+                    f"pinn_{bool(getattr(self.args,'use_pinn',False))}",
+                    f"drivers_{bool(getattr(self.args,'use_drivers',False))}",
+                    f"adv_{bool(getattr(self.args,'use_adv',False))}",
+                    f"nodiff_{not bool(getattr(self.args,'use_diffusion',True))}",
+                    f"nochem_{bool(getattr(self.args,'nochem',False))}",
+                    f"acc_{int(getattr(self.args,'accumulate_steps',1))}",
+                    f"ys_{bool(getattr(self.args,'year_split',False))}",
+                ]
+                project = os.getenv('WANDB_PROJECT', 'Ion-Phys-Toolkit')
+                entity = os.getenv('WANDB_ENTITY', None)
+                run = wandb.init(project=project,
+                                 entity=entity,
+                                 config=vars(self.args),
+                                 group=f"{ds_slug}-{md_slug}",
+                                 tags=tags)
+                try:
+                    run.name = f"{ds_slug}-{md_slug}-seed{int(getattr(self.args,'seed',0))}-{getattr(self.args,'ts_utc','')}"
+                except Exception:
+                    pass
+                try:
+                    self.args.wandb_run_id = getattr(run, 'id', None)
+                except Exception:
+                    pass
+            except Exception:
+                run = None
+            finally:
+                _restore_proxy(prev)
+        # Log status line once
+        if not self._wandb_status_logged:
+            offline = str(os.getenv('WANDB_MODE', '')).lower() == 'offline'
+            proxy = os.getenv('PROXY_SOCKS5', '')
+            status = 'online' if (run is not None and not offline) else 'offline'
+            proxy_msg = f"enabled ({proxy})" if proxy else 'disabled'
+            try:
+                self.logger.info(f"W&B status: {status} + 代理: {proxy_msg}")
+            except Exception:
+                pass
+            self._wandb_status_logged = True
+        return run
+
+    def _wandb_log(self, data: dict, step: int = None):
+        if wandb is None:
+            return
+        try:
+            run = self._wandb_prepare()
+            if run is None:
+                return
+            prev = _with_wandb_proxy()
+            try:
+                wandb.log(data, step=step)
+            finally:
+                _restore_proxy(prev)
+        except Exception:
+            pass
+
+    def _wandb_log_artifact(self, artifact, aliases=None):
+        if wandb is None or artifact is None:
+            return
+        try:
+            run = self._wandb_prepare()
+            if run is None:
+                return
+            prev = _with_wandb_proxy()
+            try:
+                wandb.run.log_artifact(artifact, aliases=aliases or ['latest'])
+            finally:
+                _restore_proxy(prev)
+        except Exception:
+            pass
+
     def val_epoch(self, epoch, val_dataloader):
         self.model.eval()
         total_val_loss = 0
         count_steps = 0
+        val_sse = 0.0
+        val_cnt = 0
         # val_pred = []
         # val_true = []
 
@@ -189,6 +326,9 @@ class Trainer(object):
             def _amp_ctx(enabled, dtype):
                 return _autocast(enabled=enabled, dtype=dtype)
 
+        dyn_caps_all = []  # collect dynamic rot_cap per-batch (TECU/min) if available
+        dyn_valid_rot_all = []
+        dyn_valid_roti_all = []
         with torch.no_grad():
             for batch_idx, batch in enumerate(val_dataloader):
                 # support optional (data, target, start_idx) for driver slicing; default to 2-tuple
@@ -239,6 +379,15 @@ class Trainer(object):
                     else:
                         res = self.loss(output, target[..., :self.args.output_dim])
                         loss = res[0] if isinstance(res, tuple) else res
+                        # streaming RMSE in TECU domain
+                        try:
+                            pred_inv = self.scaler.inverse_transform(output[..., :self.args.output_dim])
+                            true_inv = self.scaler.inverse_transform(target[..., :self.args.output_dim])
+                            diff = (pred_inv - true_inv)
+                            val_sse += float(torch.nansum(diff * diff).item())
+                            val_cnt += int(diff.numel())
+                        except Exception:
+                            pass
                         # Physics PINN (optional) — zero-driver works without start_idx
                         if self.ppinn is not None:
                             try:
@@ -269,7 +418,13 @@ class Trainer(object):
                     count_steps += 1
         denom = count_steps if count_steps > 0 else max(1, len(val_dataloader))
         val_loss = total_val_loss / denom
-        self.logger.info('**********Val Epoch {}: average Loss: {:.6f}'.format(epoch, val_loss))
+        val_rmse = float(math.sqrt(val_sse / val_cnt)) if val_cnt > 0 else float('nan')
+        self._last_val_rmse = val_rmse
+        self.logger.info('**********Val Epoch {}: average Loss: {:.6f}, RMSE: {:.6f}'.format(epoch, val_loss, 0.0 if (val_rmse!=val_rmse) else val_rmse))
+        try:
+            self._wandb_log({'val/loss': val_loss, 'val/rmse': val_rmse}, step=self.batch_seen)
+        except Exception:
+            pass
 
         return val_loss
 
@@ -353,6 +508,7 @@ class Trainer(object):
                     try:
                         output, out_time, mask, probability, eb2 = self.model(data, label, self.batch_seen, drivers_input=drivers_input)
                     except TypeError:
+                        t0 = perf_counter()
                         output, out_time, mask, probability, eb2 = self.model(data, label, self.batch_seen)
                     res = self.loss(output, target[..., :self.args.output_dim])
                     # loss functions may return (mean_loss, elementwise) tuples (e.g., mask_mae)
@@ -380,6 +536,11 @@ class Trainer(object):
                                     loss = loss + lam * loss_phys
                         except Exception:
                             pass
+                    # step time measurement
+                    try:
+                        step_times_ms.append((perf_counter() - t0) * 1000.0)
+                    except Exception:
+                        pass
 
             loss_to_back = loss / accum
             if use_amp_flag:
@@ -412,10 +573,40 @@ class Trainer(object):
                 if epoch > self.args.change_epoch:
                     total_s_loss += loss_s.item()
             #log information
-            if batch_idx % self.args.log_step == 0:
+            # maintain EMA
+            try:
+                if ema is None:
+                    ema = loss.item()
+                else:
+                    ema = 0.9 * ema + 0.1 * loss.item()
+                self._ema_loss = ema
+            except Exception:
+                pass
+            if batch_idx % max(1, int(getattr(self.args, 'log_step', 50))) == 0:
                 running_avg = (total_loss / max(1, count_steps)) if 'count_steps' in locals() else loss.item()
                 self.logger.info('Train Epoch {}: {}/{} Loss: {:.6f} (running_avg: {:.6f})'.format(
                     epoch, batch_idx, self.train_per_epoch, loss.item(), running_avg))
+                # wandb real-time metrics
+                try:
+                    logd = {'train/loss': float(loss.item()), 'train/loss_smooth': float(ema)}
+                    try:
+                        lr = float(self.optimizer.param_groups[0]['lr'])
+                        logd['train/lr'] = lr
+                    except Exception:
+                        pass
+                    if bool(getattr(self.args, 'grad_norm', False)):
+                        try:
+                            total_norm = 0.0
+                            for p in self.model.parameters():
+                                if p.grad is not None:
+                                    g = p.grad.detach().data
+                                    total_norm += float(torch.norm(g, 2).item()) ** 2
+                            logd['train/grad_norm'] = float(math.sqrt(total_norm))
+                        except Exception:
+                            pass
+                    self._wandb_log(logd, step=self.batch_seen)
+                except Exception:
+                    pass
         denom = count_steps if count_steps > 0 else self.train_per_epoch
         train_epoch_loss = total_loss/denom
         if self.args.mode == 'pretrain':
@@ -425,6 +616,12 @@ class Trainer(object):
         else:
             self.logger.info('**********Train Epoch {}: averaged Loss: {:.6f} (per-batch mean)'.format(epoch, train_epoch_loss))
 
+        # epoch-level average step time
+        try:
+            if step_times_ms:
+                self._wandb_log({'train/avg_step_time_ms_per_epoch': float(sum(step_times_ms)/len(step_times_ms))}, step=self.batch_seen)
+        except Exception:
+            pass
         # learning rate scheduling (non-plateau handled here; plateau handled in train() after val)
         if self.lr_scheduler is not None and getattr(self.args, 'scheduler', 'none') != 'plateau':
             if self.args.lr_decay:
@@ -495,6 +692,94 @@ class Trainer(object):
                 self.logger.info('*********************************Current best model saved!')
                 best_model = copy.deepcopy(self.model.state_dict())
                 best_model_test = copy.deepcopy(self.model)
+                # Best snapshot: save symlink immediately, async upload to OSS, and write snapshot JSON
+                try:
+                    # save checkpoint to the named path and refresh best_model.pth symlink
+                    import os as _os
+                    base_stem = _os.path.splitext(self.log_filename)[0] if hasattr(self, 'log_filename') else 'supervised_best'
+                    named_pth = _os.path.join(self.args.log_dir, f"{base_stem}.pth")
+                    torch.save(best_model, named_pth)
+                    self.logger.info("Saving current model to " + named_pth)
+                    best_link = _os.path.join(self.args.log_dir, 'best_model.pth')
+                    try:
+                        if _os.path.islink(best_link) or _os.path.exists(best_link):
+                            _os.remove(best_link)
+                        _os.symlink(_os.path.basename(named_pth), best_link)
+                        self.logger.info("Updated symlink -> best_model.pth")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to create best_model.pth symlink: {e}")
+                    # build s3 uri and async upload if OSS creds present
+                    try:
+                        ds_slug = results_io.dataset_slug(getattr(self.args, 'dataset', ''))
+                        md_slug = str(getattr(self.args, 'model', 'model')).lower()
+                        seed = int(getattr(self.args, 'seed', 0))
+                        run_tag = getattr(self.args, 'run_tag', '')
+                        bucket = os.getenv('OSS_BUCKET', '')
+                        prefix = f"Ion-Phys-Toolkit/{ds_slug}/{md_slug}/seed_{seed}/{run_tag}/"
+                        s3_uri = f"s3://{bucket}/{prefix}best_model.pth" if bucket else None
+                        def _upload_best(path: str, key: str):
+                            if requests is None or oss2 is None or not bucket:
+                                return
+                            try:
+                                ak = os.environ['OSS_ACCESS_KEY_ID']; sk = os.environ['OSS_ACCESS_KEY_SECRET']
+                                endpoint = os.environ.get('OSS_ENDPOINT','oss-accelerate.aliyuncs.com')
+                                sess = requests.Session(); sess.trust_env = False
+                                auth = oss2.Auth(ak, sk)
+                                bkt = oss2.Bucket(auth, 'https://'+endpoint, bucket, session=oss2.Session(sess))
+                                key_full = prefix + key
+                                sz = os.path.getsize(path)
+                                if sz <= 50*1024*1024:
+                                    with open(path, 'rb') as f:
+                                        bkt.put_object(key_full, f)
+                                else:
+                                    import tarfile
+                                    tmp = path + '.tar.gz'
+                                    with tarfile.open(tmp, 'w:gz') as tar:
+                                        tar.add(path, arcname=os.path.basename(path))
+                                    oss2.resumable_upload(bkt, key_full+'.tar.gz', tmp, num_threads=6, part_size=10*1024*1024)
+                                    try:
+                                        os.remove(tmp)
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+                        try:
+                            Thread(target=_upload_best, args=(best_link, 'best_model.pth'), daemon=True).start()
+                        except Exception:
+                            pass
+                        # write best_snapshot.json
+                        try:
+                            import json
+                            snap = {
+                                'epoch': int(epoch),
+                                'step': int(self.batch_seen),
+                                'metrics': {
+                                    'val_loss': float(best_loss),
+                                    'val_rmse': float(getattr(self, '_last_val_rmse', float('nan'))),
+                                },
+                                'timestamp': getattr(self.args, 'ts_utc', ''),
+                                'run_tag': run_tag,
+                                'wandb_run_id': getattr(self.args, 'wandb_run_id', None),
+                                'checkpoint_reference_uri': s3_uri,
+                                'oss_prefix': prefix,
+                            }
+                            with open(os.path.join(self.args.log_dir, 'best_snapshot.json'), 'w') as f:
+                                json.dump(snap, f, indent=2)
+                            # upload snapshot artifact online
+                            try:
+                                if wandb is not None:
+                                    art = wandb.Artifact(name=f"best-snapshot-{getattr(self.args,'wandb_run_id','')}", type='results')
+                                    art.add_file(os.path.join(self.args.log_dir, 'best_snapshot.json'))
+                                    self._wandb_log_artifact(art, aliases=['best'])
+                                    self._wandb_log({'best/val_loss': float(best_loss), 'best/val_rmse': float(getattr(self, '_last_val_rmse', float('nan')))}, step=self.batch_seen)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
 
         training_time = time.time() - start_time
         self.logger.info("Total training time: {:.4f}min, best loss: {:.6f}".format((training_time / 60), best_loss))
@@ -679,6 +964,41 @@ class Trainer(object):
                 except Exception:
                     _batch_T.append(None)
                 _batch_start_idx.append(int(sidx) if sidx is not None else None)
+                # dynamic rot_cap series (TECU/min) if drivers available
+                try:
+                    if bool(getattr(self.args, 'use_pinn', False)) and bool(getattr(self.args, 'use_drivers', False)):
+                        from lib.physics.drivers import DriversStore
+                        if not hasattr(self, '_drivers'):
+                            self._drivers = DriversStore(self._drivers_path, device='cpu')
+                        T = int(output.shape[1]); N = int(output.shape[2])
+                        if sidx is not None and T >= 2:
+                            d = self._drivers.slice_bt(int(sidx), T, N)
+                            if 'Dst' in d:
+                                import numpy as _np
+                                dst = d['Dst'].cpu().numpy()  # [1,T,N]
+                                dstn = _np.clip(-dst, 0.0, None)
+                                k = float(getattr(self.args, 'rot_cap_k', 0.01))
+                                base = float(getattr(self.args, 'rot_cap', 0.5))
+                                cap = base * (1.0 + k * (dstn / 100.0))  # [1,T,N], TECU/min
+                                cap = cap[:, 1:, :]  # align to ROT steps
+                                # average over nodes for a compact per-step series
+                                cap_series = cap.mean(axis=2).reshape(-1)  # [T-1]
+                                dyn_caps_all.append(cap_series)
+                                # dynamic validity (optional)
+                                # compute ROT and ROTI in TECU/min domain
+                                yp_bt = output.detach().cpu().numpy()  # [B,T,N,1]
+                                yt_bt = y_true[-1].detach().cpu().numpy() if len(y_true)>0 else None
+                                rot = (yp_bt[:, 1:, :, 0] - yp_bt[:, :-1, :, 0]) / float(getattr(self.args, 'interval', 120))
+                                rot_valid = (abs(rot) <= cap)
+                                dyn_valid_rot_all.append(rot_valid.mean())
+                                # roti rolling std
+                                if rot.shape[1] >= 3:
+                                    w = 3
+                                    roti = _np.stack([rot[:, i:i+w, :].std(axis=1) for i in range(rot.shape[1]-w+1)], axis=1)
+                                    roti_cap = float(getattr(self.args, 'roti_cap_scale', 0.7)) * cap[:, :roti.shape[1], :]
+                                    dyn_valid_roti_all.append((roti <= roti_cap).mean())
+                except Exception:
+                    pass
 
         y_true = scaler.inverse_transform(torch.cat(y_true, dim=0))
         y_pred = scaler.inverse_transform(torch.cat(y_pred, dim=0))
@@ -758,7 +1078,7 @@ class Trainer(object):
         logger.info("[{}] Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, R2:{:.4f}, CORR:{:.4f}".format(
                     tag, mae, rmse, 0.0 if r2_overall!=r2_overall else r2_overall, 0.0 if corr_avg!=corr_avg else corr_avg))
 
-        # physics metrics (PINN) — only when enabled and drivers available
+        # physics metrics (PINN) — only when enabled
         try:
             if bool(getattr(args, 'use_pinn', False)):
                 phys = {}
@@ -813,6 +1133,26 @@ class Trainer(object):
                 except Exception:
                     night_ratio = None
                 phys['night_monotonicity'] = night_ratio
+                # dynamic rot_cap series aggregation
+                try:
+                    if dyn_caps_all:
+                        import numpy as _np
+                        caps = _np.concatenate([c.reshape(1,-1) for c in dyn_caps_all], axis=0)  # [B_all, T-1]
+                        caps_mean = caps.mean(axis=0).astype('float32')
+                        np.save(os.path.join(args.log_dir, 'dynamic_rot_cap.npy'), caps_mean)
+                        phys['dynamic_rot_cap_stats'] = {
+                            'mean': float(caps_mean.mean()),
+                            'min': float(caps_mean.min()),
+                            'max': float(caps_mean.max()),
+                            'unit': 'TECU_per_min',
+                        }
+                        phys['dynamic_rot_cap_path'] = 'dynamic_rot_cap.npy'
+                    if dyn_valid_rot_all:
+                        phys['rot_validity_dynamic'] = float(np.mean(dyn_valid_rot_all))
+                    if dyn_valid_roti_all:
+                        phys['roti_validity_dynamic'] = float(np.mean(dyn_valid_roti_all))
+                except Exception:
+                    pass
                 import json, os
                 with open(os.path.join(args.log_dir, 'physics_metrics.json'), 'w') as f:
                     json.dump(phys, f, indent=2)
@@ -822,7 +1162,7 @@ class Trainer(object):
         # optionally save arrays for reproduction (float16 to reduce size)
         if save_arrays and log_filename:
             try:
-                import numpy as np, os
+                import os
                 base_stem = os.path.splitext(log_filename)[0]
                 np.save(os.path.join(args.log_dir, f"{base_stem}_{save_tag}_preds.npy"),
                         y_pred.detach().cpu().to(torch.float16).numpy())
