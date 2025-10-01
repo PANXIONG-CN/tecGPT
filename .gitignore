@@ -8,6 +8,16 @@
 /outputs/
 /.venv/
 /coordinates/
+# training artifacts
+/model/SAVE/
+*.pth
+*.pt
+*.ckpt
+
+# OS/editor junk
+.DS_Store
+.idea/
+.vscode/
 
 # Python cache files
 __pycache__/
@@ -15,4 +25,3 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
-
