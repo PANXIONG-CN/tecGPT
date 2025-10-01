@@ -14,6 +14,31 @@ try:
 except Exception:  # pragma: no cover
     wandb = None
 
+def _with_wandb_proxy():
+    try:
+        p = os.getenv('PROXY_SOCKS5', '')
+        if not p:
+            return None
+        prev = {k: os.environ.get(k) for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY')}
+        os.environ['HTTP_PROXY'] = p
+        os.environ['HTTPS_PROXY'] = p
+        os.environ['ALL_PROXY'] = p
+        return prev
+    except Exception:
+        return None
+
+
+def _restore_proxy(prev):
+    try:
+        if prev is None:
+            return
+        for k, v in prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    except Exception:
+        pass
 
 # --------------------------- helpers ---------------------------
 
@@ -233,9 +258,13 @@ def _wandb_log_artifact(run, file_path: Path, atype: str = 'file', aliases: Opti
     if not file_path.exists():
         return
     try:
-        art = wandb.Artifact(name=f"{file_path.stem}-{run.id}", type=atype)
-        art.add_file(str(file_path))
-        run.log_artifact(art, aliases=aliases or ['latest'])
+        prev = _with_wandb_proxy()
+        try:
+            art = wandb.Artifact(name=f"{file_path.stem}-{run.id}", type=atype)
+            art.add_file(str(file_path))
+            run.log_artifact(art, aliases=aliases or ['latest'])
+        finally:
+            _restore_proxy(prev)
     except Exception:
         pass
 
@@ -317,7 +346,7 @@ def post_run_collect_and_upload(run, args, model, out_dir: Path) -> None:
     if not cc_path.exists():
         cc = {
             'start_ts': getattr(args, '_run_start_ts', None),
-            'end_ts': _now_ts(),
+            'end_ts': _now_utc_ts(),
             'total_seconds': None,
             'epochs': int(getattr(args, 'epochs', 0)),
             'steps': int(getattr(args, 'batch_seen', 0)) if hasattr(args, 'batch_seen') else None,
