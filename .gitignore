@@ -7,7 +7,7 @@
 .secrets/
 /outputs/
 /.venv/
-
+/coordinates/
 
 # Python cache files
 __pycache__/
