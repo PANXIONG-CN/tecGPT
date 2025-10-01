@@ -14,7 +14,7 @@ except Exception:
 import torch.nn as nn
 import configparser
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 try:
     import yaml
 except Exception:
@@ -123,7 +123,8 @@ if args_predictor is not None:
 init_seed(args.seed, args.seed_mode)
 # UTC ts for standardized naming (e.g., 20250101T000000Z)
 try:
-    args.ts_utc = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+    # timezone-aware UTC timestamp
+    args.ts_utc = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
 except Exception:
     args.ts_utc = time.strftime('%Y%m%dT%H%M%SZ')
 args._run_start_ts = args.ts_utc
@@ -157,9 +158,28 @@ run = None
 try:
     prev_proxy = _with_wandb_proxy()
     if wandb is not None:
+        ds_slug = results_io.dataset_slug(getattr(args, 'dataset', ''))
+        md_slug = str(getattr(args, 'model', 'model')).lower()
+        tags = [
+            f"seed_{int(getattr(args,'seed',0))}",
+            f"amp_{bool(getattr(args,'amp',False))}",
+            f"pinn_{bool(getattr(args,'use_pinn',False))}",
+            f"drivers_{bool(getattr(args,'use_drivers',False))}",
+            f"adv_{bool(getattr(args,'use_adv',False))}",
+            f"nodiff_{not bool(getattr(args,'use_diffusion',True))}",
+            f"nochem_{bool(getattr(args,'nochem',False))}",
+            f"acc_{int(getattr(args,'accumulate_steps',1))}",
+            f"ys_{bool(getattr(args,'year_split',False))}",
+        ]
         run = wandb.run or wandb.init(project=os.getenv('WANDB_PROJECT','Ion-Phys-Toolkit'),
                                       entity=os.getenv('WANDB_ENTITY','xiongpan-tsinghua-university'),
-                                      config=vars(args))
+                                      config=vars(args),
+                                      group=f"{ds_slug}-{md_slug}",
+                                      tags=tags)
+        try:
+            run.name = f"{ds_slug}-{md_slug}-seed{int(getattr(args,'seed',0))}-{args.ts_utc}"
+        except Exception:
+            pass
         args.wandb_run_id = getattr(run, 'id', None)
     _restore_proxy(prev_proxy)
 except Exception:
@@ -195,6 +215,13 @@ if args.mode == 'pretrain':
 else:
     model = Network_Predict(args, args_predictor)
     model = model.to(args.device)
+# optional gradient watching
+try:
+    import wandb as _wandb
+    if bool(getattr(args, 'watch_grads', False)) and _wandb is not None:
+        _wandb.watch(model, log='gradients', log_freq=max(1, int(getattr(args, 'log_step', 50))))
+except Exception:
+    pass
 
 # Optional: initialize from a saved checkpoint for supervised training
 init_from = getattr(args, 'init_from', '') if hasattr(args, 'init_from') else ''
@@ -382,7 +409,7 @@ try:
 except Exception:
     pass
 
-# W&B finalize + small files upload (proxy only for W&B)
+# W&B finalize + small files upload (proxy only for W&B) + offline sync
 try:
     prev_proxy = _with_wandb_proxy()
     results_io.post_run_collect_and_upload(run, args, model, out_dir)
@@ -392,3 +419,16 @@ try:
 except Exception as e:
     _restore_proxy(prev_proxy)
     print('results_io post-run failed:', e)
+
+# WANDB offline sync at script end
+try:
+    if str(os.getenv('WANDB_MODE', '')).lower() == 'offline':
+        # use proxy for sync as well if available
+        _pp = _with_wandb_proxy()
+        try:
+            os.system('wandb sync --sync-all')
+        finally:
+            _restore_proxy(_pp)
+        print('已执行 offline sync')
+except Exception:
+    pass
