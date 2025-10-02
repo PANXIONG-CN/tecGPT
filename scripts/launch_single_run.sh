@@ -20,8 +20,6 @@ if [[ -n "${PROXY_SOCKS5:-}" ]]; then
   export HTTP_PROXY="$PROXY_SOCKS5"
   export HTTPS_PROXY="$PROXY_SOCKS5"
   export ALL_PROXY="$PROXY_SOCKS5"
-  export WANDB_HTTP_PROXY="$PROXY_SOCKS5"
-  export WANDB_HTTPS_PROXY="$PROXY_SOCKS5"
   echo "[proxy] Enabled for training: $PROXY_SOCKS5"
 fi
 # 避免 wandb 单独起进程拿不到你后续对 env 的改动

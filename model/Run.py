@@ -26,8 +26,6 @@ if _p:
     os.environ.setdefault('HTTP_PROXY', _p)
     os.environ.setdefault('HTTPS_PROXY', _p)
     os.environ.setdefault('ALL_PROXY', _p)
-    os.environ.setdefault('WANDB_HTTP_PROXY', _p)
-    os.environ.setdefault('WANDB_HTTPS_PROXY', _p)
 os.environ.setdefault('WANDB_START_METHOD', 'thread')
 os.environ.setdefault('WANDB_DIR', os.path.join('.', 'wandb'))
 

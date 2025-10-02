@@ -19,12 +19,10 @@ def _with_wandb_proxy():
         p = os.getenv('PROXY_SOCKS5', '')
         if not p:
             return None
-        prev = {k: os.environ.get(k) for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'WANDB_HTTP_PROXY', 'WANDB_HTTPS_PROXY')}
+        prev = {k: os.environ.get(k) for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY')}
         os.environ['HTTP_PROXY'] = p
         os.environ['HTTPS_PROXY'] = p
         os.environ['ALL_PROXY'] = p
-        os.environ['WANDB_HTTP_PROXY'] = p
-        os.environ['WANDB_HTTPS_PROXY'] = p
         return prev
     except Exception:
         return None

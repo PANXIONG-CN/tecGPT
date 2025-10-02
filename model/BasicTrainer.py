@@ -36,12 +36,10 @@ def _with_wandb_proxy():
         p = os.getenv('PROXY_SOCKS5', '')
         if not p:
             return None
-        prev = {k: os.environ.get(k) for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'WANDB_HTTP_PROXY', 'WANDB_HTTPS_PROXY')}
+        prev = {k: os.environ.get(k) for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY')}
         os.environ['HTTP_PROXY'] = p
         os.environ['HTTPS_PROXY'] = p
         os.environ['ALL_PROXY'] = p
-        os.environ['WANDB_HTTP_PROXY'] = p
-        os.environ['WANDB_HTTPS_PROXY'] = p
         return prev
     except Exception:
         return None
@@ -436,6 +434,9 @@ class Trainer(object):
         count_steps = 0
         total_flow_loss = 0
         total_s_loss = 0
+        # initialize training-time trackers
+        ema = None
+        step_times_ms = []
         # AMP dtype selection: bf16 preferred on supported GPUs (e.g., H800)
         use_amp_flag = bool(getattr(self.args, 'amp', False)) and torch.cuda.is_available()
         has_bf16 = _has_bf16_cuda()
@@ -490,6 +491,7 @@ class Trainer(object):
                         loss = loss_flow
             else:
                 with _amp_ctx(use_amp_flag, amp_dtype):
+                    t0 = perf_counter()
                     # Optional drivers input for de_gwn
                     drivers_input = None
                     if (str(getattr(self.args, 'model', '')).lower() == 'gwn') and bool(getattr(self.args, 'use_drivers', False)):
