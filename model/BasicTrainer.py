@@ -1174,10 +1174,6 @@ class Trainer(object):
                     from lib import results_io as _rio
                     _rio._safe_json_dump(phys, os.path.join(args.log_dir, 'physics_metrics.json'))
                 except Exception:
-                try:
-                    from lib import results_io as _rio
-                    _rio._safe_json_dump(phys, os.path.join(args.log_dir, 'physics_metrics.json'))
-                except Exception:
                     import json, os
                     with open(os.path.join(args.log_dir, 'physics_metrics.json'), 'w') as f:
                         json.dump(phys, f, indent=2)
