@@ -861,6 +861,11 @@ class Trainer(object):
                     except Exception:
                         ok = False
                     if not ok:
+                        try:
+                            self.logger.warning('WARN: Background upload for best_model.pth seems to have failed. '
+                                                'Retrying synchronously to ensure completion.')
+                        except Exception:
+                            pass
                         # try memory bytes
                         if self._best_bytes is not None:
                             try:
@@ -879,7 +884,15 @@ class Trainer(object):
                                 if os.path.exists(path):
                                     with open(path, 'rb') as f:
                                         bkt.put_object(key_full, f)
+                                    ok = True
                                     self.logger.info('Fallback uploaded best_model.pth to OSS from file')
+                            except Exception:
+                                pass
+                        # explicit log for fallback start and failure cases
+                        if not ok:
+                            try:
+                                self.logger.warning('WARN: Fallback synchronous upload for best_model.pth did not succeed. '
+                                                    'Please check OSS credentials, endpoint, and network connectivity.')
                             except Exception:
                                 pass
                 except Exception:
