@@ -2,6 +2,7 @@ wandb
 oss2
 requests
 PyYAML
+PySocks
 numpy
 scipy
 pandas
