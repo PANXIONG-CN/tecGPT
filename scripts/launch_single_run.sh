@@ -9,11 +9,23 @@ if [[ -f "$SECRETS_FILE" ]]; then
   source "$SECRETS_FILE"
 fi
 
-# Define socks5h proxy for W&B only (do not export globally)
+# Define socks5h proxy for W&B; allow full training lifecycle to inherit
 PROXY_SOCKS5="${PROXY_SOCKS5:-socks5h://127.0.0.1:1080}"
 export PROXY_SOCKS5
 # OSS should bypass proxy regardless
 export NO_PROXY="oss-accelerate.aliyuncs.com,oss-cn-beijing.aliyuncs.com,localhost,127.0.0.1"
+
+# ====== 训练全程代理（保障 wandb.log 走 socks5h）======
+if [[ -n "${PROXY_SOCKS5:-}" ]]; then
+  export HTTP_PROXY="$PROXY_SOCKS5"
+  export HTTPS_PROXY="$PROXY_SOCKS5"
+  export ALL_PROXY="$PROXY_SOCKS5"
+  export WANDB_HTTP_PROXY="$PROXY_SOCKS5"
+  export WANDB_HTTPS_PROXY="$PROXY_SOCKS5"
+  echo "[proxy] Enabled for training: $PROXY_SOCKS5"
+fi
+# 避免 wandb 单独起进程拿不到你后续对 env 的改动
+export WANDB_START_METHOD=${WANDB_START_METHOD:-thread}
 
 # Default W&B context (can be overridden by secrets)
 export WANDB_ENTITY="${WANDB_ENTITY:-xiongpan-tsinghua-university}"
