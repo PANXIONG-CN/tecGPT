@@ -36,10 +36,12 @@ def _with_wandb_proxy():
         p = os.getenv('PROXY_SOCKS5', '')
         if not p:
             return None
-        prev = {k: os.environ.get(k) for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY')}
+        prev = {k: os.environ.get(k) for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'WANDB_HTTP_PROXY', 'WANDB_HTTPS_PROXY')}
         os.environ['HTTP_PROXY'] = p
         os.environ['HTTPS_PROXY'] = p
         os.environ['ALL_PROXY'] = p
+        os.environ['WANDB_HTTP_PROXY'] = p
+        os.environ['WANDB_HTTPS_PROXY'] = p
         return prev
     except Exception:
         return None
@@ -1077,6 +1079,21 @@ class Trainer(object):
         corr_avg = sum(corr_vals)/len(corr_vals) if len(corr_vals)>0 else float('nan')
         logger.info("[{}] Average Horizon, MAE: {:.2f}, RMSE: {:.2f}, R2:{:.4f}, CORR:{:.4f}".format(
                     tag, mae, rmse, 0.0 if r2_overall!=r2_overall else r2_overall, 0.0 if corr_avg!=corr_avg else corr_avg))
+        # Log summary metrics to W&B with proxy if available
+        try:
+            if wandb is not None and wandb.run is not None:
+                prev = _with_wandb_proxy()
+                try:
+                    wandb.log({
+                        f"{tag}/MAE": float(mae),
+                        f"{tag}/RMSE": float(rmse),
+                        f"{tag}/R2": 0.0 if r2_overall!=r2_overall else float(r2_overall),
+                        f"{tag}/CORR": 0.0 if corr_avg!=corr_avg else float(corr_avg),
+                    })
+                finally:
+                    _restore_proxy(prev)
+        except Exception:
+            pass
 
         # physics metrics (PINN) — only when enabled
         try:
@@ -1153,9 +1170,17 @@ class Trainer(object):
                         phys['roti_validity_dynamic'] = float(np.mean(dyn_valid_roti_all))
                 except Exception:
                     pass
-                import json, os
-                with open(os.path.join(args.log_dir, 'physics_metrics.json'), 'w') as f:
-                    json.dump(phys, f, indent=2)
+                try:
+                    from lib import results_io as _rio
+                    _rio._safe_json_dump(phys, os.path.join(args.log_dir, 'physics_metrics.json'))
+                except Exception:
+                try:
+                    from lib import results_io as _rio
+                    _rio._safe_json_dump(phys, os.path.join(args.log_dir, 'physics_metrics.json'))
+                except Exception:
+                    import json, os
+                    with open(os.path.join(args.log_dir, 'physics_metrics.json'), 'w') as f:
+                        json.dump(phys, f, indent=2)
         except Exception as e:
             logger.warning(f"physics_metrics.json skipped: {e}")
 
