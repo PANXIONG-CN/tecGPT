@@ -19,10 +19,12 @@ def _with_wandb_proxy():
         p = os.getenv('PROXY_SOCKS5', '')
         if not p:
             return None
-        prev = {k: os.environ.get(k) for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY')}
+        prev = {k: os.environ.get(k) for k in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'WANDB_HTTP_PROXY', 'WANDB_HTTPS_PROXY')}
         os.environ['HTTP_PROXY'] = p
         os.environ['HTTPS_PROXY'] = p
         os.environ['ALL_PROXY'] = p
+        os.environ['WANDB_HTTP_PROXY'] = p
+        os.environ['WANDB_HTTPS_PROXY'] = p
         return prev
     except Exception:
         return None
@@ -57,6 +59,20 @@ def _now_utc_ts() -> str:
     # UTC ISO-like without colons: %Y%m%dT%H%M%SZ
     import datetime as _dt
     return _dt.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+
+
+def _safe_json_dump(obj, path):
+    from pathlib import Path as _Path
+    path = _Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(obj, f, indent=2, ensure_ascii=False, default=str)
+        try:
+            f.flush(); os.fsync(f.fileno())
+        except Exception:
+            pass
+    os.replace(tmp, path)
 
 
 def dataset_slug(name: str) -> str:
@@ -373,7 +389,7 @@ def post_run_collect_and_upload(run, args, model, out_dir: Path) -> None:
         if hasattr(args, '_train_start_time') and hasattr(args, '_train_end_time'):
             cc['total_seconds'] = float(args._train_end_time - args._train_start_time)
         # save
-        _save_json(cc_path, cc)
+        _safe_json_dump(cc, cc_path)
 
     # manifest.json
     man_path = out_dir / 'manifest.json'
@@ -400,7 +416,7 @@ def post_run_collect_and_upload(run, args, model, out_dir: Path) -> None:
                            f"{str(getattr(args,'model','')).lower()}/seed_{int(getattr(args,'seed',0))}/"
                            f"{getattr(args,'run_tag', '')}/",
         }
-        _save_json(man_path, man)
+        _safe_json_dump(man, man_path)
 
     # Upload small files to W&B
     _wandb_log_artifact(run, metrics_path, atype='results')
