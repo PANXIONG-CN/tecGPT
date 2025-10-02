@@ -696,88 +696,118 @@ class Trainer(object):
                 self.logger.info('*********************************Current best model saved!')
                 best_model = copy.deepcopy(self.model.state_dict())
                 best_model_test = copy.deepcopy(self.model)
-                # Best snapshot: save symlink immediately, async upload to OSS, and write snapshot JSON
+                # Best snapshot: direct-OSS for big files (optional), else local save + async OSS upload, and write snapshot JSON
                 try:
-                    # save checkpoint to the named path and refresh best_model.pth symlink
-                    import os as _os
+                    import os as _os, io as _io, json
                     base_stem = _os.path.splitext(self.log_filename)[0] if hasattr(self, 'log_filename') else 'supervised_best'
                     named_pth = _os.path.join(self.args.log_dir, f"{base_stem}.pth")
-                    torch.save(best_model, named_pth)
-                    self.logger.info("Saving current model to " + named_pth)
                     best_link = _os.path.join(self.args.log_dir, 'best_model.pth')
-                    try:
-                        if _os.path.islink(best_link) or _os.path.exists(best_link):
-                            _os.remove(best_link)
-                        _os.symlink(_os.path.basename(named_pth), best_link)
-                        self.logger.info("Updated symlink -> best_model.pth")
-                    except Exception as e:
-                        self.logger.warning(f"Failed to create best_model.pth symlink: {e}")
-                    # build s3 uri and async upload if OSS creds present
-                    try:
-                        ds_slug = results_io.dataset_slug(getattr(self.args, 'dataset', ''))
-                        md_slug = str(getattr(self.args, 'model', 'model')).lower()
-                        seed = int(getattr(self.args, 'seed', 0))
-                        run_tag = getattr(self.args, 'run_tag', '')
-                        bucket = os.getenv('OSS_BUCKET', '')
-                        prefix = f"Ion-Phys-Toolkit/{ds_slug}/{md_slug}/seed_{seed}/{run_tag}/"
-                        s3_uri = f"s3://{bucket}/{prefix}best_model.pth" if bucket else None
-                        def _upload_best(path: str, key: str):
-                            if requests is None or oss2 is None or not bucket:
-                                return
-                            try:
-                                ak = os.environ['OSS_ACCESS_KEY_ID']; sk = os.environ['OSS_ACCESS_KEY_SECRET']
-                                endpoint = os.environ.get('OSS_ENDPOINT','oss-accelerate.aliyuncs.com')
-                                sess = requests.Session(); sess.trust_env = False
-                                auth = oss2.Auth(ak, sk)
-                                bkt = oss2.Bucket(auth, 'https://'+endpoint, bucket, session=oss2.Session(sess))
-                                key_full = prefix + key
-                                sz = os.path.getsize(path)
-                                if sz <= 50*1024*1024:
-                                    with open(path, 'rb') as f:
-                                        bkt.put_object(key_full, f)
-                                else:
-                                    import tarfile
-                                    tmp = path + '.tar.gz'
-                                    with tarfile.open(tmp, 'w:gz') as tar:
-                                        tar.add(path, arcname=os.path.basename(path))
-                                    oss2.resumable_upload(bkt, key_full+'.tar.gz', tmp, num_threads=6, part_size=10*1024*1024)
-                                    try:
-                                        os.remove(tmp)
-                                    except Exception:
-                                        pass
-                            except Exception:
-                                pass
+                    # OSS components
+                    ds_slug = results_io.dataset_slug(getattr(self.args, 'dataset', ''))
+                    md_slug = str(getattr(self.args, 'model', 'model')).lower()
+                    seed = int(getattr(self.args, 'seed', 0))
+                    run_tag = getattr(self.args, 'run_tag', '')
+                    bucket = os.getenv('OSS_BUCKET', '')
+                    prefix = f"Ion-Phys-Toolkit/{ds_slug}/{md_slug}/seed_{seed}/{run_tag}/"
+                    s3_uri = f"s3://{bucket}/{prefix}best_model.pth" if bucket else None
+                    # Env controls
+                    direct_on = str(os.getenv('OSS_DIRECT_UPLOAD','')).lower() in ('1','true','yes')
+                    thr_mb = int(os.getenv('BIG_UPLOAD_THRESHOLD_MB','50'))
+                    write_ref = str(os.getenv('WRITE_OSSREF','')).lower() in ('1','true','yes')
+                    trust_env_oss = str(os.getenv('OSS_TRUST_ENV','')).lower() in ('1','true','yes')
+                    # Serialize to memory and decide
+                    buf = _io.BytesIO(); torch.save(best_model, buf); size_bytes = buf.tell(); buf.seek(0)
+                    did_direct = False
+                    if direct_on and bucket and (requests is not None) and (oss2 is not None) and (size_bytes > thr_mb*1024*1024):
                         try:
-                            Thread(target=_upload_best, args=(best_link, 'best_model.pth'), daemon=True).start()
-                        except Exception:
-                            pass
-                        # write best_snapshot.json
-                        try:
-                            import json
-                            snap = {
-                                'epoch': int(epoch),
-                                'step': int(self.batch_seen),
-                                'metrics': {
-                                    'val_loss': float(best_loss),
-                                    'val_rmse': float(getattr(self, '_last_val_rmse', float('nan'))),
-                                },
-                                'timestamp': getattr(self.args, 'ts_utc', ''),
-                                'run_tag': run_tag,
-                                'wandb_run_id': getattr(self.args, 'wandb_run_id', None),
-                                'checkpoint_reference_uri': s3_uri,
-                                'oss_prefix': prefix,
-                            }
-                            with open(os.path.join(self.args.log_dir, 'best_snapshot.json'), 'w') as f:
-                                json.dump(snap, f, indent=2)
-                            # upload snapshot artifact online
+                            ak = os.environ['OSS_ACCESS_KEY_ID']; sk = os.environ['OSS_ACCESS_KEY_SECRET']
+                            endpoint = os.environ.get('OSS_ENDPOINT','oss-accelerate.aliyuncs.com')
+                            sess = requests.Session(); sess.trust_env = bool(trust_env_oss)
+                            auth = oss2.Auth(ak, sk)
+                            bkt = oss2.Bucket(auth, 'https://'+endpoint, bucket, session=oss2.Session(sess))
+                            bkt.put_object(prefix+'best_model.pth', buf.getvalue())
+                            did_direct = True
+                            self._best_direct_uploaded = True
+                            self.logger.info(f"Direct-uploaded best to OSS: {s3_uri}")
+                            if write_ref and s3_uri:
+                                try:
+                                    with open(_os.path.join(self.args.log_dir, 'best_model.ossref'), 'w') as rf:
+                                        rf.write(s3_uri)
+                                except Exception:
+                                    pass
+                            # W&B external artifact reference
                             try:
-                                if wandb is not None:
-                                    art = wandb.Artifact(name=f"best-snapshot-{getattr(self.args,'wandb_run_id','')}", type='results')
-                                    art.add_file(os.path.join(self.args.log_dir, 'best_snapshot.json'))
+                                if wandb is not None and s3_uri:
+                                    art = wandb.Artifact(name=f"best-ossref-{getattr(self.args,'wandb_run_id','')}", type='external')
+                                    art.add_reference(s3_uri)
                                     self._wandb_log_artifact(art, aliases=['best'])
                                     self._wandb_log({'best/val_loss': float(best_loss), 'best/val_rmse': float(getattr(self, '_last_val_rmse', float('nan')))}, step=self.batch_seen)
                             except Exception:
                                 pass
+                        except Exception as e:
+                            self.logger.warning(f"Direct OSS upload failed, fallback to local save: {e}")
+                    if not did_direct:
+                        # Local save and async upload
+                        torch.save(best_model, named_pth)
+                        self.logger.info("Saving current model to " + named_pth)
+                        try:
+                            if _os.path.islink(best_link) or _os.path.exists(best_link):
+                                _os.remove(best_link)
+                            _os.symlink(_os.path.basename(named_pth), best_link)
+                            self.logger.info("Updated symlink -> best_model.pth")
+                        except Exception as e:
+                            self.logger.warning(f"Failed to create best_model.pth symlink: {e}")
+                        try:
+                            if bucket and (requests is not None) and (oss2 is not None):
+                                def _upload_best(path: str, key: str):
+                                    try:
+                                        ak = os.environ['OSS_ACCESS_KEY_ID']; sk = os.environ['OSS_ACCESS_KEY_SECRET']
+                                        endpoint = os.environ.get('OSS_ENDPOINT','oss-accelerate.aliyuncs.com')
+                                        sess = requests.Session(); sess.trust_env = bool(trust_env_oss)
+                                        auth = oss2.Auth(ak, sk)
+                                        bkt = oss2.Bucket(auth, 'https://'+endpoint, bucket, session=oss2.Session(sess))
+                                        key_full = prefix + key
+                                        sz = os.path.getsize(path)
+                                        if sz <= 50*1024*1024:
+                                            with open(path, 'rb') as f:
+                                                bkt.put_object(key_full, f)
+                                        else:
+                                            import tarfile
+                                            tmp = path + '.tar.gz'
+                                            with tarfile.open(tmp, 'w:gz') as tar:
+                                                tar.add(path, arcname=os.path.basename(path))
+                                            oss2.resumable_upload(bkt, key_full+'.tar.gz', tmp, num_threads=6, part_size=10*1024*1024)
+                                            try:
+                                                os.remove(tmp)
+                                            except Exception:
+                                                pass
+                                    except Exception:
+                                        pass
+                                try:
+                                    Thread(target=_upload_best, args=(best_link, 'best_model.pth'), daemon=True).start()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                    # best_snapshot.json
+                    try:
+                        snap = {
+                            'epoch': int(epoch),
+                            'step': int(self.batch_seen),
+                            'metrics': {'val_loss': float(best_loss), 'val_rmse': float(getattr(self, '_last_val_rmse', float('nan')))},
+                            'timestamp': getattr(self.args, 'ts_utc', ''),
+                            'run_tag': run_tag,
+                            'wandb_run_id': getattr(self.args, 'wandb_run_id', None),
+                            'checkpoint_reference_uri': s3_uri if bucket else None,
+                            'oss_prefix': prefix,
+                        }
+                        with open(os.path.join(self.args.log_dir, 'best_snapshot.json'), 'w') as f:
+                            json.dump(snap, f, indent=2)
+                        try:
+                            if wandb is not None:
+                                art2 = wandb.Artifact(name=f"best-snapshot-{getattr(self.args,'wandb_run_id','')}", type='results')
+                                art2.add_file(os.path.join(self.args.log_dir, 'best_snapshot.json'))
+                                self._wandb_log_artifact(art2, aliases=['best'])
                         except Exception:
                             pass
                     except Exception:
@@ -788,14 +818,17 @@ class Trainer(object):
         training_time = time.time() - start_time
         self.logger.info("Total training time: {:.4f}min, best loss: {:.6f}".format((training_time / 60), best_loss))
 
-        # Save the best model to file (always)
+        # Save the best model to file (always) unless direct-upload was requested and used
         try:
-            target_state = best_model if 'best_model' in locals() else self.model.state_dict()
-            # pretrain: save named + symlink latest_pretrain.pth; supervised: save best_model.pth
-            if getattr(self.args, 'mode', '') == 'pretrain':
+            if getattr(self, '_best_direct_uploaded', False):
+                pass
+            else:
+                target_state = best_model if 'best_model' in locals() else self.model.state_dict()
+                # pretrain: save named + symlink latest_pretrain.pth; supervised: save best_model.pth
+                if getattr(self.args, 'mode', '') == 'pretrain':
                 # save named
-                torch.save(target_state, self.best_path)
-                self.logger.info("Saving pretrain model to " + self.best_path)
+                    torch.save(target_state, self.best_path)
+                    self.logger.info("Saving pretrain model to " + self.best_path)
                 # create/refresh symlink latest_pretrain.pth
                 try:
                     import os as _os
@@ -809,7 +842,7 @@ class Trainer(object):
                     self.logger.info("Updated symlink -> latest_pretrain.pth")
                 except Exception as e:
                     self.logger.warning(f"Failed to create latest_pretrain.pth symlink: {e}")
-            else:
+                else:
                 # supervised: save with log basename and create/refresh symlink best_model.pth
                 try:
                     import os as _os
