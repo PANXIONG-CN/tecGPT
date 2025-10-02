@@ -196,8 +196,8 @@ bucket_name = os.environ['OSS_BUCKET']
 ak = os.environ['OSS_ACCESS_KEY_ID']
 sk = os.environ['OSS_ACCESS_KEY_SECRET']
 
-# direct session w/o proxies
-sess = requests.Session(); sess.trust_env = False
+# session; allow proxies if OSS_TRUST_ENV=1
+sess = requests.Session(); sess.trust_env = str(os.getenv('OSS_TRUST_ENV','')).lower() in ('1','true','yes')
 auth = oss2.Auth(ak, sk)
 bucket = oss2.Bucket(auth, 'https://'+endpoint, bucket_name, session=oss2.Session(sess))
 
@@ -213,8 +213,13 @@ def resumable_upload(local_path: Path, key: str):
     oss2.resumable_upload(bucket, key, str(local_path), multipart_threshold=10*1024*1024,
                           num_threads=6, part_size=10*1024*1024)
 
+write_ossref = str(os.getenv('WRITE_OSSREF','')).lower() in ('1','true','yes')
+ossref_path = root / 'best_model.ossref'
 for p in root.rglob('*'):
     if not p.is_file():
+        continue
+    # Skip best_model.pth when ossref marker exists to avoid redundant upload
+    if write_ossref and p.name == 'best_model.pth' and ossref_path.exists():
         continue
     size = p.stat().st_size
     key = prefix + p.relative_to(root).as_posix()
@@ -264,7 +269,16 @@ p_pred = os.path.join(out_dir, 'predictions.npy')
 if os.path.exists(p_pred):
     refs.append(f"s3://{bucket}/{prefix}predictions.npy")
 bm = os.path.join(out_dir, 'best_model.pth')
-if os.path.exists(bm):
+ossref = os.path.join(out_dir, 'best_model.ossref')
+if os.path.exists(ossref):
+    try:
+        with open(ossref, 'r') as rf:
+            uri = rf.read().strip()
+        if uri:
+            refs.append(uri)
+    except Exception:
+        pass
+elif os.path.exists(bm):
     refs.append(f"s3://{bucket}/{prefix}best_model.pth")
 if refs:
     art = wandb.Artifact(name=f"oss-refs-{run.id}", type='external')

@@ -102,6 +102,11 @@ class Trainer(object):
         # W&B state
         self._wandb_status_logged = False
         self._wandb_first_log_done = False
+        # OSS background uploads state
+        self._oss_threads = []
+        self._best_direct_uploaded = False
+        self._best_bytes = None
+        self._best_s3_uri = None
         #log
         if os.path.isdir(args.log_dir) == False and not args.debug:
             os.makedirs(args.log_dir, exist_ok=True)
@@ -720,15 +725,25 @@ class Trainer(object):
                     did_direct = False
                     if direct_on and bucket and (requests is not None) and (oss2 is not None) and (size_bytes > thr_mb*1024*1024):
                         try:
-                            ak = os.environ['OSS_ACCESS_KEY_ID']; sk = os.environ['OSS_ACCESS_KEY_SECRET']
+                            # schedule background direct upload from memory and join at end of training
+                            bytes_data = buf.getvalue()
+                            self._best_bytes = bytes_data
+                            self._best_s3_uri = s3_uri
                             endpoint = os.environ.get('OSS_ENDPOINT','oss-accelerate.aliyuncs.com')
-                            sess = requests.Session(); sess.trust_env = bool(trust_env_oss)
-                            auth = oss2.Auth(ak, sk)
-                            bkt = oss2.Bucket(auth, 'https://'+endpoint, bucket, session=oss2.Session(sess))
-                            bkt.put_object(prefix+'best_model.pth', buf.getvalue())
+                            def _direct_upload_bytes(data: bytes, bucket_name: str, key_full: str, endpoint_url: str, trust_env: bool):
+                                try:
+                                    ak = os.environ['OSS_ACCESS_KEY_ID']; sk = os.environ['OSS_ACCESS_KEY_SECRET']
+                                    sess = requests.Session(); sess.trust_env = bool(trust_env)
+                                    auth = oss2.Auth(ak, sk)
+                                    bkt = oss2.Bucket(auth, 'https://'+endpoint_url, bucket_name, session=oss2.Session(sess))
+                                    bkt.put_object(key_full, data)
+                                except Exception:
+                                    pass
+                            t = Thread(target=_direct_upload_bytes, args=(bytes_data, bucket, prefix+'best_model.pth', endpoint, trust_env_oss), daemon=False)
+                            t.start(); self._oss_threads.append(t)
                             did_direct = True
                             self._best_direct_uploaded = True
-                            self.logger.info(f"Direct-uploaded best to OSS: {s3_uri}")
+                            self.logger.info(f"Direct-upload scheduled for OSS: {s3_uri}")
                             if write_ref and s3_uri:
                                 try:
                                     with open(_os.path.join(self.args.log_dir, 'best_model.ossref'), 'w') as rf:
@@ -784,7 +799,8 @@ class Trainer(object):
                                     except Exception:
                                         pass
                                 try:
-                                    Thread(target=_upload_best, args=(best_link, 'best_model.pth'), daemon=True).start()
+                                    t = Thread(target=_upload_best, args=(best_link, 'best_model.pth'), daemon=False)
+                                    t.start(); self._oss_threads.append(t)
                                 except Exception:
                                     pass
                         except Exception:
@@ -817,6 +833,59 @@ class Trainer(object):
 
         training_time = time.time() - start_time
         self.logger.info("Total training time: {:.4f}min, best loss: {:.6f}".format((training_time / 60), best_loss))
+        # Join pending OSS uploads then fallback-sync best if missing
+        try:
+            for t in getattr(self, '_oss_threads', []):
+                try:
+                    t.join()
+                except Exception:
+                    pass
+            bucket = os.getenv('OSS_BUCKET', '')
+            if bucket and (requests is not None) and (oss2 is not None):
+                ds_slug = results_io.dataset_slug(getattr(self.args, 'dataset', ''))
+                md_slug = str(getattr(self.args, 'model', 'model')).lower()
+                seed = int(getattr(self.args, 'seed', 0))
+                run_tag = getattr(self.args, 'run_tag', '')
+                prefix = f"Ion-Phys-Toolkit/{ds_slug}/{md_slug}/seed_{seed}/{run_tag}/"
+                endpoint = os.environ.get('OSS_ENDPOINT','oss-accelerate.aliyuncs.com')
+                trust_env_oss = str(os.getenv('OSS_TRUST_ENV','')).lower() in ('1','true','yes')
+                try:
+                    ak = os.environ['OSS_ACCESS_KEY_ID']; sk = os.environ['OSS_ACCESS_KEY_SECRET']
+                    sess = requests.Session(); sess.trust_env = bool(trust_env_oss)
+                    auth = oss2.Auth(ak, sk)
+                    bkt = oss2.Bucket(auth, 'https://'+endpoint, bucket, session=oss2.Session(sess))
+                    key_full = prefix + 'best_model.pth'
+                    ok = False
+                    try:
+                        ok = bool(bkt.object_exists(key_full))
+                    except Exception:
+                        ok = False
+                    if not ok:
+                        # try memory bytes
+                        if self._best_bytes is not None:
+                            try:
+                                bkt.put_object(key_full, self._best_bytes)
+                                ok = True
+                                self.logger.info('Fallback uploaded best_model.pth to OSS from memory')
+                            except Exception:
+                                ok = False
+                        # try local file
+                        if not ok:
+                            try:
+                                base_stem = os.path.splitext(self.log_filename)[0] if hasattr(self, 'log_filename') else 'supervised_best'
+                                named_pth = os.path.join(self.args.log_dir, f"{base_stem}.pth")
+                                best_link = os.path.join(self.args.log_dir, 'best_model.pth')
+                                path = best_link if os.path.exists(best_link) else named_pth
+                                if os.path.exists(path):
+                                    with open(path, 'rb') as f:
+                                        bkt.put_object(key_full, f)
+                                    self.logger.info('Fallback uploaded best_model.pth to OSS from file')
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         # Save the best model to file (always) unless direct-upload was requested and used
         try:
